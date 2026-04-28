@@ -210,10 +210,47 @@ b0-setup
 
 **任務**：對 b1b 切出的**測試集**（2026 年演講，訓練全程未見過）跑以上四組比較，整理成表格
 
+**視覺化產出（Blog 用）**：以下 5 張圖為 b5 必交付物，存入 `blog/assets/`
+
+**圖 1 — Loss Curve（訓練健康度）**
+- 從 b2-sft / b3-lora 訓練 log 取 `trainer.state.log_history`，畫 train loss 與 val loss 雙折線
+- X 軸：steps；Y 軸：loss；標出 early stopping 點（val loss 開始回升處）
+- 工具：`matplotlib`；WandB 截圖可作為補充，但需額外輸出靜態 PNG 存檔
+
+**圖 2 — 三欄 Side-by-Side 對比（最直觀的說服工具）**
+- 選 5–8 個代表性問題，涵蓋政策類、科技倫理類、開放政府類
+- 每題對比三欄：Base Model / 微調後（b3-lora）/ 微調 + RAG（b7）
+- 格式：Markdown 表格（blog 直接嵌入）或 HTML 三欄 div
+- 問題需包含至少一題讓 Base Model 明顯失敗的 edge case
+
+**圖 3 — 風格詞頻對比圖（Tangram 獨有亮點）**
+- 定義唐鳳「簽名詞」清單（至少含：協作、透明、信任、公民、參與、開放、審議、數位）
+- 三組文本各自統計詞頻：原始演講語料 / Base Model 輸出 / 微調後輸出
+- 圖形：Grouped Bar Chart；工具：`jieba` 分詞 + `matplotlib`
+- 可額外附 Word Cloud 作為視覺點綴（非必要）
+
+**圖 4 — 雷達圖（多維風格能力對比）**
+- 5 個評分維度，需與唐鳳溝通特性直接對應：
+  1. 政策術語準確度（專業詞彙比例）
+  2. 包容性語言（「我們」/ 第一人稱複數使用頻率）
+  3. 類比解釋能力（遇抽象概念是否轉化為具體例子，LLM-as-Judge 評分）
+  4. 問題針對性（回答是否切題，LLM-as-Judge 評分）
+  5. 語氣一致性（台語借詞、特色句型符合度，LLM-as-Judge 評分）
+- 對比兩條線：Base Model vs b3-lora（可選加入 b3-lora+RAG 第三條線）
+- 評分方式：請 Claude 或 GPT-4o 對每題每維度打 1–5 分，取 5 題平均
+- 工具：`matplotlib` polar chart
+
+**圖 5 — ROUGE / Perplexity 跨版本對比圖**
+- X 軸：4 個模型版本（Base / b2-sft / b3-lora / b4-qlora）
+- Y 軸左：ROUGE-L score；Y 軸右：Perplexity（雙軸折線或分組條形圖）
+- 工具：`evaluate` 套件 + `rouge_score`；Perplexity 用 held-out 唐鳳演講集計算
+- 目的：讓讀者看出 LoRA 以 1% 參數達到接近 SFT 的效果，QLoRA 的量化損失幅度
+
 **DoD**：
 - 有 base vs b3-lora 的 perplexity、ROUGE 量化數字
 - 有 LLM-as-a-Judge 的風格評分（至少 5 題）
 - Overfitting 檢查：fine-tuned 的 MMLU 分數未大幅低於 base model
+- `blog/assets/` 資料夾內有圖 1–5 的 PNG 檔，命名規則：`fig1_loss_curve.png`、`fig2_sidebyside.md`、`fig3_word_freq.png`、`fig4_radar.png`、`fig5_metrics.png`
 
 ### b6-deploy｜本地部署
 - **任務**：把微調模型轉成 GGUF 格式，用 Ollama 在 Mac mini 本地跑
@@ -244,8 +281,15 @@ b0-setup
       ...
       return response, count + 1
   ```
-- **Blog 內容重點**：before/after 模型對比（b5 數據）、踩過的坑（learning.md 思考紀錄）、架構圖
-- **DoD**：HF Spaces 公開 URL 可測試、rate limiting 有效、blog 文章草稿完成
+- **Blog 敘事架構**（按此順序撰寫，技術敘事而非技術報告）：
+  1. **為什麼是唐鳳？** — 動機 + 挑戰說明（她的溝通風格為何值得學習？）
+  2. **資料工程** — 從演講到訓練格式（b1a/b1b 流程截圖 + 資料量統計）
+  3. **三階段訓練** — SFT → LoRA → QLoRA（圖 1 Loss Curve + 可訓練參數量對比）
+  4. **效果如何？** — 圖 2 Side-by-Side + 圖 3 詞頻圖 + 圖 4 雷達圖 + 圖 5 ROUGE/Perplexity
+  5. **RAG 加持前後差異** — 引用準確度對比（圖 2 第三欄 vs 第二欄）
+  6. **反思：哪裡還不夠好** — 錯誤案例分析，說明下一步優化方向（展示 critical thinking）
+- **圖表來源**：所有圖直接引用 `blog/assets/` 內的 b5-eval 產出，不重新生成
+- **DoD**：HF Spaces 公開 URL 可測試、rate limiting 有效、blog 文章草稿完成，6 個章節皆有對應內容
 
 ---
 
