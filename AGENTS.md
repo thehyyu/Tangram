@@ -4,22 +4,69 @@
 
 ## 願景
 
-以「做中學」方式走完 LLM 微調的完整工程流程，最終產出**唐鳳風格 AI 政策溝通助理**作為 AI 導入職缺的面試作品集。
+以「做中學」方式走完 LLM 微調的完整工程流程，親手建出一個**唐鳳風格 AI 政策溝通助理**。
 
-**核心痛點**：企業導入 AI 時，技術人員說不清楚、決策者聽不懂，溝通斷層普遍。  
-**解法**：把技術概念丟進去，模型以唐鳳的溝通風格輸出「給非技術主管的一頁式 AI 說明」。
+目標是把一個技術概念丟進去，模型能以唐鳳的方式輸出一段讓非技術背景的人也能讀懂的說明。
 
-**最終架構**
+---
+
+## 最終架構
+
+整個系統分兩條線：**離線訓練** 和 **線上推論**。
+
+### 離線訓練流程
 
 ```
-技術概念輸入
-     ↓
-Fine-tuned 唐鳳模型（負責風格與論述結構）
-     ↓
-RAG 過她的演講原文（負責事實錨定，避免捏造）
-     ↓
-輸出：給主管的一頁式 AI 說明
+archive.tw/speeches（唐鳳演講逐字稿，CC0）
+     │
+     ▼ b1a-scrape
+  raw JSON（標題 / 日期 / 內文）
+     │
+     ▼ b1b-format
+  Q&A 對 → apply_chat_template → tokenized dataset
+     │
+     ├─ b2-sft ──→ SFTTrainer 全參數微調（驗證流程可跑）
+     │
+     └─ b3-lora ─→ LoRA adapter（r=8, target: q_proj / v_proj）
+                        │
+                        ▼ b4-qlora（Colab T4）
+                   4-bit QLoRA adapter
+                        │
+                        ▼ b6-deploy
+                   adapter merge → llama.cpp → tangram.gguf
+                        │
+                        ▼
+                   ollama create tangram（本地可對話）
 ```
+
+### 線上推論流程（b7 加入 RAG 後）
+
+```
+使用者輸入（一段技術概念）
+     │
+     ▼ sentence-transformers（embedding）
+  查詢向量
+     │
+     ▼ chromadb 向量搜尋
+  相關演講段落 top-k chunks
+     │
+     ▼ 組裝 prompt
+  system: 你是唐鳳，以下是她說過的話：{chunks}
+  user:   {使用者輸入}
+     │
+     ▼ Tangram（HF Spaces，CPU 推論）
+  輸出：以唐鳳風格解釋的說明
+     │
+     ▼ Gradio UI（b9）
+  公開 demo 頁面（每 session 限制 10 次）
+```
+
+### 為什麼要兩個機制並用？
+
+| 機制 | 負責的事 | 沒有它會怎樣 |
+|------|---------|------------|
+| Fine-tune | 學唐鳳「怎麼說」（風格、句式、論述結構） | 輸出像一般 AI，沒有她的味道 |
+| RAG | 引用她真實說過的話（事實錨定） | 模型會「幻覺」，捏造她沒說過的內容 |
 
 ---
 
@@ -38,9 +85,36 @@ RAG 過她的演講原文（負責事實錨定，避免捏造）
 | 部署 | `llama.cpp` → `ollama` | GGUF 轉換 + 本地推論 |
 | RAG | `chromadb` + `sentence-transformers` | 本地向量資料庫 |
 | 發布 | `huggingface_hub` | 上傳 adapter + model card |
+| Demo | `gradio` | HF Spaces 公開 demo，含 rate limiting |
 
 **起始模型**：`meta-llama/Llama-3.2-3B-Instruct`（Meta 出品，3B 參數，MPS 相容）  
 **硬體**：Mac mini Apple Silicon（MPS），b4 需 Google Colab T4
+
+---
+
+## 前置準備
+
+開始任何 branch 前需確認：
+
+**HuggingFace Token**
+Llama 3 是 gated model，需先到 HF 申請存取權限，再設定環境變數：
+```bash
+# .env（不 commit）
+HF_TOKEN=hf_xxxxxxxxxxxxxxxx
+```
+
+**`.gitignore`**
+以下絕對不進 git（單個檔案動輒數 GB）：
+```
+.env
+.venv/
+__pycache__/
+*.gguf
+*.safetensors
+checkpoints/
+~/.cache/huggingface/   # HF 模型快取在本機，不在 repo 裡
+runs/                   # tensorboard logs
+```
 
 ---
 
@@ -48,15 +122,17 @@ RAG 過她的演講原文（負責事實錨定，避免捏造）
 
 ```
 b0-setup
-  └── b1a-scrape       爬取唐鳳演講頁面 → raw JSON
-        └── b1b-format  解析 Q&A → chat template 格式
-              └── b2-sft   SFTTrainer 跑通微調
-                    └── b3-lora    換 LoRA，降低可訓練參數
-                          └── b4-qlora*  4-bit QLoRA（Colab T4）
-                                └── b5-eval    before/after 效果對比
-                                      └── b6-deploy  GGUF → Ollama 本地跑
-                                            └── b7-rag  加上 RAG 事實錨定
-                                                  └── b8-hub  HF Hub + blog
+  └── b0b-tracer         手寫假資料 → format → 1-epoch 微調 → base vs fine-tuned 對比
+        └── b1a-scrape    爬取唐鳳演講頁面 → raw JSON
+              └── b1b-format    解析 Q&A → chat template 格式
+                    └── b2-sft        SFTTrainer 跑通微調
+                          └── b3-lora       換 LoRA，降低可訓練參數
+                                └── b4-qlora*     4-bit QLoRA（Colab T4）
+                                      └── b5-eval       before/after 效果對比
+                                            └── b6-deploy     GGUF → Ollama 本地跑
+                                                  └── b7-rag        加上 RAG 事實錨定
+                                                        └── b8-hub        HF Hub + model card
+                                                              └── b9-spaces  Gradio demo + blog
 ```
 
 `*b4-qlora 需 Google Colab T4，Mac MPS 不支援 bitsandbytes 4-bit 量化`
@@ -66,9 +142,15 @@ b0-setup
 ## Branch 規格
 
 ### b0-setup｜載入模型 + 推論驗證
-- **任務**：用 `transformers` 載入 Qwen2.5-0.5B，問它一個問題，看到回答
+- **任務**：用 `transformers` 載入 Llama-3.2-3B-Instruct，問它一個問題，看到回答
 - **關鍵 API**：`pipeline("text-generation", model=..., device="mps")`
+- **前置**：需設定 `HF_TOKEN` 環境變數（Llama 3 為 gated model，需先在 HF 申請存取）
 - **DoD**：終端機印出模型回答，無報錯
+
+### b0b-tracer｜曳光彈（端對端最薄切片）
+- **任務**：跳過爬蟲，手寫 10 筆假 Q&A，跑完 format → 1-epoch 微調 → 推論，印出 base model 與 fine-tuned 的同題回答
+- **目的**：在投入真實資料前，驗證「fine-tune → 推論」這條主幹路徑可以跑通，以及模型能否學到風格差異
+- **DoD**：base model 與 fine-tuned 的回答出現可見差異，訓練全程無報錯
 
 ### b1a-scrape｜爬取演講原文
 - **任務**：爬取 `archive.tw/speeches` 所有中文演講頁面，儲存成 raw JSON
@@ -83,6 +165,7 @@ b0-setup
 ### b2-sft｜SFTTrainer 跑通微調
 - **任務**：用 `trl` 的 SFTTrainer 做第一次微調，觀察 loss 下降
 - **記憶體策略**：`gradient_accumulation_steps` + `gradient_checkpointing`
+- **可重現性**：固定 `seed=42`（`TrainingArguments` 的 `seed` 參數），確保 b2 vs b3 結果可比較
 - **DoD**：loss 數值下降，訓練完成不報錯
 
 ### b3-lora｜LoRA 參數高效微調
@@ -98,7 +181,7 @@ b0-setup
 ### b5-eval｜效果評估
 - **任務**：量化微調前後的模型差異
 - **指標**：ROUGE（0-1，越高越接近標準答案）、perplexity（越低越流暢）
-- **DoD**：有 before/after 的量化數字可放進 blog
+- **DoD**：有 before/after 的量化數字可對比
 
 ### b6-deploy｜本地部署
 - **任務**：把微調模型轉成 GGUF 格式，用 Ollama 在 Mac mini 本地跑
@@ -111,8 +194,25 @@ b0-setup
 - **DoD**：問一個問題，回答中能引用她演講的原文段落
 
 ### b8-hub｜發布與記錄
-- **任務**：push adapter 到 HuggingFace Hub，寫 model card，整理成 blog 文章
-- **DoD**：公開連結可分享，blog 文章草稿完成
+- **任務**：push adapter 到 HuggingFace Hub，寫 model card
+- **DoD**：HF Hub 上有公開連結，model card 記錄訓練資料、評估結果與使用方式
+
+### b9-spaces｜公開 Demo + Blog
+- **任務**：在 HF Spaces 建 Gradio demo，實作 session-based rate limiting，寫 blog 文章
+- **Rate limiting 策略**：
+  ```python
+  # 同時請求上限
+  demo.queue(max_size=5, default_concurrency_limit=1)
+
+  # 每 session 限制 10 次
+  def predict(prompt, count: int, request: gr.Request):
+      if count >= 10:
+          return "今日已達使用上限，明天再來。", count
+      ...
+      return response, count + 1
+  ```
+- **Blog 內容重點**：before/after 模型對比（b5 數據）、踩過的坑（learning.md 思考紀錄）、架構圖
+- **DoD**：HF Spaces 公開 URL 可測試、rate limiting 有效、blog 文章草稿完成
 
 ---
 
@@ -122,8 +222,9 @@ b0-setup
 2. **程式碼優先，解釋其次**：先給可以跑的 code snippet，術語解釋放在 comment 或事後問。
 3. **MPS 限制要說清楚**：遇到 `bitsandbytes` / CUDA-only 的東西，直接告知需要切換到 Colab，不要試著在 Mac 上繞行。
 4. **debug 時給完整 traceback**：不要只貼最後一行錯誤，完整 traceback 才能定位問題。
-5. **資料格式驗證**：b1b 做完後，幫驗證至少一筆 tokenized 樣本的格式是否符合 Qwen chat template 規格。
+5. **資料格式驗證**：b1b 做完後，幫驗證至少一筆 tokenized 樣本的格式是否符合 Llama 3 chat template 規格。
 6. **不要跳步驟**：每個 branch 有 DoD，DoD 沒達到不要往下一個 branch 推。
+7. **選擇性測試**：只對純函數寫 assert（資料格式化、tokenization 檢查、RAG 查詢回傳筆數）。訓練迴圈和模型輸出風格靠 DoD 人工驗收，不強行套 TDD。
 
 ---
 

@@ -47,6 +47,17 @@ b6（Ollama 本地推論）
 
 ---
 
+## b0b：曳光彈
+
+### Tracer Bullet（曳光彈）
+出自《The Pragmatic Programmer》。指在正式開發前，用最少的材料打通系統的整條主幹路徑，確認架構可行。
+
+**和 prototype 的差別**：prototype 是探索完就丟的；曳光彈是真實程式碼，後續的 branch 直接在它的基礎上擴展，不重寫。
+
+**Tangram 的曳光彈做什麼**：跳過爬蟲，手寫 10 筆假 Q&A，跑完 format → 1-epoch 微調 → 推論，確認 fine-tune 之後模型的回答和 base model 有可見差異。這一刀切過整個系統最核心的假設，之後才值得花時間去爬 3000 筆真實資料。
+
+---
+
 ## b1：資料準備
 
 ### 爬蟲（requests + BeautifulSoup）
@@ -168,10 +179,10 @@ llama.cpp 使用的模型檔案格式，把模型壓縮成單一檔案，Ollama 
 ## b8：發布
 
 ### HuggingFace Hub
-類似 GitHub 但專門放 AI 模型的平台。上傳後有公開連結，面試時可以直接秀。
+類似 GitHub 但專門放 AI 模型的平台。上傳後有公開連結可以分享。
 
 ### model card
-模型的 README，說明模型用途、訓練資料、評估結果與使用方式。AI 作品集的標準格式。
+模型的 README，說明模型用途、訓練資料、評估結果與使用方式。
 
 ---
 
