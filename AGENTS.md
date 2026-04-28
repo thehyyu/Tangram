@@ -179,9 +179,29 @@ b0-setup
 - **DoD**：Colab notebook 跑通，有 loss 數值輸出
 
 ### b5-eval｜效果評估
-- **任務**：量化微調前後的模型差異
-- **指標**：ROUGE（0-1，越高越接近標準答案）、perplexity（越低越流暢）
-- **DoD**：有 before/after 的量化數字可對比
+
+**比較矩陣**：這個專案產出 3 個訓練變體，評估時要回答三個問題：
+
+| 比較組 | 問的問題 | 主要指標 |
+|--------|---------|---------|
+| base → b2-sft | 全參數微調有沒有學到唐鳳風格？ | Perplexity、ROUGE、LLM-as-a-Judge |
+| b2-sft → b3-lora | LoRA 用 1% 參數能達到接近效果嗎？ | 同上 |
+| b3-lora → b4-qlora | 4-bit 量化損失多少品質？ | 同上 |
+| b6（無 RAG）→ b7（有 RAG） | RAG 有沒有減少幻覺？ | 引用準確度、人工核對 |
+
+**指標說明**：
+
+- **Perplexity**：在 held-out 唐鳳演講集上測，數值越低代表模型越「預測得到」她的說話方式，即風格契合度越高
+- **ROUGE**：微調後回答與她真實回答的 n-gram 重疊率，有效但抓不到風格的深層特徵
+- **LLM-as-a-Judge**：請 Claude 或 GPT-4 對「這段回答有多像唐鳳」打 1–10 分，是最直接量測風格的方式；對同一問題取 base model 與 fine-tuned 的回答各一份送給 judge 評分
+- **Overfitting 檢查**：在少量 MMLU 題目上比較 base 與 fine-tuned 分數，確認一般語言能力沒有明顯退化（catastrophic forgetting）
+
+**任務**：對同一批測試問題跑以上四組比較，整理成表格
+
+**DoD**：
+- 有 base vs b3-lora 的 perplexity、ROUGE 量化數字
+- 有 LLM-as-a-Judge 的風格評分（至少 5 題）
+- Overfitting 檢查：fine-tuned 的 MMLU 分數未大幅低於 base model
 
 ### b6-deploy｜本地部署
 - **任務**：把微調模型轉成 GGUF 格式，用 Ollama 在 Mac mini 本地跑

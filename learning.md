@@ -141,11 +141,47 @@ QLoRA 論文提出的 4-bit 量化格式，比一般 INT4 在訓練時數值更�
 
 ## b5：評估
 
+### 初始基準（Initial Baseline）的重要性
+在開始微調之前，要先記錄 base model 在測試集上的表現，這份數字就是「改進前的參考點」。沒有它，之後的數字沒有意義——不知道是進步了還是退步了。
+
+### cross-entropy（交叉熵）
+訓練時的 loss 本質上就是交叉熵：衡量模型預測的分佈與真實答案之間的差距。loss 持續下降 = 交叉熵縮小 = 模型越來越接近訓練資料的分佈。和 perplexity 的關係：`perplexity = e^(cross-entropy)`，兩者測的是同一件事，只是尺度不同。
+
 ### ROUGE
-衡量生成文字與參考答案重疊程度的指標（0-1 分），值越高代表回答越接近標準答案。
+衡量生成文字與參考答案的 n-gram 重疊程度（0–1 分），值越高代表回答越接近標準答案。
+
+**Tangram 的限制**：ROUGE 抓得到詞彙重疊，抓不到「唐鳳味」。她換個說法表達同樣意思，ROUGE 就給低分。所以 ROUGE 是輔助指標，不能當唯一標準。
 
 ### perplexity（困惑度）
-模型對某段文字「有多困惑」的度量，越低代表模型越確信自己的輸出，通常用來衡量語言流暢度。
+模型對某段文字「有多困惑」的度量，越低代表模型越能預測這段文字的走向。
+
+**Tangram 的用法**：在 held-out 唐鳳演講集上測 perplexity。fine-tuned 的 perplexity 低於 base model，代表模型學會了她的說話方式。
+
+### LLM-as-a-Judge
+用更強的語言模型（Claude、GPT-4）來評分，而不是只靠 n-gram 指標。
+
+**Tangram 的做法**：對同一個問題，拿 base model 和 fine-tuned 的回答各一份，送給 judge 這樣的 prompt：
+```
+請評估以下回答有多像唐鳳的說話風格，1 分（完全不像）到 10 分（非常像）。
+只給分數和一句理由。
+
+回答 A：{base_model_response}
+回答 B：{finetuned_response}
+```
+這是目前對「風格」最直接、最實用的量測方式。
+
+### Overfitting（過擬合）與 Catastrophic Forgetting（災難性遺忘）
+兩個不同但相關的風險：
+
+| 問題 | 症狀 | 怎麼檢查 |
+|------|------|---------|
+| **Overfitting** | 在訓練集表現好，但測試集（沒見過的演講）表現差 | 比較 train loss 與 validation loss 的差距 |
+| **Catastrophic Forgetting** | 學了唐鳳風格，但忘了原本的語言能力 | 拿少量 MMLU 題目比較 base vs fine-tuned 的正確率 |
+
+LoRA 天生比 Full SFT 更抗 catastrophic forgetting，因為它沒有動到原始權重。
+
+### 標準化 Benchmark 的取捨
+GLUE、MMLU、GSM8K 這類 benchmark 測的是通用語言理解和數學推理，**不適合直接用來評估 Tangram**（風格微調 ≠ 知識能力）。但 MMLU 可以拿來做 Catastrophic Forgetting 的快速檢查：fine-tuned 之後分數不應該明顯下降。
 
 ---
 
