@@ -164,14 +164,21 @@ b0-setup
   - 訓練集 85%：2020–2024 年演講
   - 驗證集 10%：2025 年演講
   - 測試集 5%：2026 年演講（b5 唯一用到的時機，訓練全程不碰）
+- **品質過濾**：過濾掉回答少於 50 個 token 的 Q&A pair（太短代表沒有完整論述，學不到風格）
 - **DoD**：印出一筆完整的 tokenized 樣本，可看到 input_ids 數列；三份資料集筆數確認無誤
 
 ### b2-sft｜SFTTrainer 跑通微調
 - **任務**：用 `trl` 的 SFTTrainer 做第一次微調，觀察 loss 下降
-- **記憶體策略**：`gradient_accumulation_steps` + `gradient_checkpointing`
-- **可重現性**：固定 `seed=42`（`TrainingArguments` 的 `seed` 參數），確保 b2 vs b3 結果可比較
-- **驗證集**：`SFTTrainer(eval_dataset=val_dataset)`，訓練中同步監控 validation loss，偵測 overfitting
-- **DoD**：train loss 下降；validation loss 同步下降且未出現上揚（即未 overfit）
+- **關鍵超參數**：
+  - `learning_rate=2e-4`（LLM 微調學習率要極小，太大訓練直接崩）
+  - `warmup_ratio=0.1`（前 10% steps 做預熱，防止訓練初期 loss 爆炸）
+  - `max_seq_length=1024`（唐鳳的回答有時很長，先從 1024 開始，不夠再調）
+- **記憶體策略**：`gradient_accumulation_steps=4` + `gradient_checkpointing=True`
+- **可重現性**：固定 `seed=42`，確保 b2 vs b3 結果可比較
+- **防止 Catastrophic Forgetting**：訓練資料中混入 5% Alpaca 通用對話資料，維持模型原有語言能力
+- **驗證集**：`SFTTrainer(eval_dataset=val_dataset)`，訓練中同步監控 validation loss
+- **監控**：用 WandB（`report_to="wandb"`）觀察 train loss 與 val loss 曲線；val loss 開始回升即停止訓練
+- **DoD**：train loss 下降；validation loss 同步下降且未出現上揚
 
 ### b3-lora｜LoRA 參數高效微調
 - **任務**：用 `peft` 加上 LoRA adapter，比較可訓練參數量
@@ -211,6 +218,7 @@ b0-setup
 ### b6-deploy｜本地部署
 - **任務**：把微調模型轉成 GGUF 格式，用 Ollama 在 Mac mini 本地跑
 - **流程**：adapter merge → `llama.cpp` 轉 GGUF → `ollama create`
+- **合併注意**：`merge_and_unload()` 前須確認 base model 以 FP16 或 BF16 載入，否則合併後精度損失會導致性能下降
 - **DoD**：`ollama run tangram` 可以對話，現場 demo 能跑
 
 ### b7-rag｜加上 RAG 事實錨定

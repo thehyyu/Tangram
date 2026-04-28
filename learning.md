@@ -97,6 +97,9 @@ assistant: 唐鳳的回答（模型要學的目標風格）
 ### 爬蟲（requests + BeautifulSoup）
 用程式自動瀏覽網頁、抽取內容。`requests` 抓 HTML，`BeautifulSoup` 解析標籤。
 
+### Quality over Quantity（品質優於數量）
+對 LLM 微調來說，1,000 條高品質對話的效果通常遠好於 10,000 條雜訊過多的資料。Tangram 的具體做法：過濾掉回答少於 50 個 token 的 Q&A pair——太短代表沒有完整論述，模型學不到她的說話方式。
+
 ### raw JSON 策略
 原始資料先存成 JSON，讓後續格式化步驟可以重跑，不需要再爬一次。爬蟲跟格式化永遠分開做。
 
@@ -124,6 +127,26 @@ Hugging Face 的訓練函式庫，把 PyTorch 原本要自己寫的訓練迴圈�
 
 ### loss curve（損失曲線）
 訓練過程中每個 step 的錯誤率變化圖。loss 持續下降 = 模型在學習。
+
+### learning rate（學習率）與 warmup
+LLM 微調的學習率要設得極小（`2e-4` 或 `5e-5`），比一般深度學習小很多。原因是模型已經有大量知識，步伐太大會把原本學好的東西蓋掉。
+
+**Warmup steps**：訓練開始的前 10% steps 先用很小的學習率「預熱」，再逐漸升到目標值。防止訓練初期 loss 暴衝崩潰。
+
+### max_seq_length（最大序列長度）
+輸入給模型的最大 token 數。設太長：記憶體爆；設太短：長回答被截斷，模型學不到完整論述。
+
+Tangram 從 1024 開始測試——唐鳳的回答有時很長，如果發現截斷嚴重再調高。長度加倍，記憶體占用約呈平方增長，要謹慎。
+
+### WandB（Weights & Biases）
+訓練監控工具。把 `report_to="wandb"` 加進 `TrainingArguments`，就能在瀏覽器上即時看到 train loss 和 validation loss 的曲線圖。
+
+**為什麼不能只看最後數字**：如果 val loss 在第 3 個 epoch 就開始回升，但你跑了 10 個 epoch，最後得到的是一個過擬合的模型。WandB 讓你看到「哪一刻」該停。
+
+### Catastrophic Forgetting 的解法
+概念在 b5 學習筆記裡有說。解法是在訓練資料中混入 **5% 的通用對話資料**（如 Alpaca dataset），讓模型在學唐鳳風格的同時，不忘記原本的語言能力。
+
+LoRA 天生比 Full SFT 更抗 Catastrophic Forgetting（因為沒有動到原始權重），但混入通用資料仍是好習慣。
 
 ### gradient accumulation（梯度累積）
 記憶體不夠時，把多個小批次的梯度加總才更新一次參數，效果等同更大的 batch size。
@@ -223,6 +246,8 @@ GLUE、MMLU、GSM8K 這類 benchmark 測的是通用語言理解和數學推理�
 
 ### adapter merge（適配器合併）
 把訓練好的 LoRA adapter 數學上合回 base model，產生一個「已微調好的完整模型」，方便後續轉檔。
+
+**精度陷阱**：`merge_and_unload()` 之前，base model 必須以 **FP16 或 BF16** 載入（`torch_dtype=torch.float16`）。若以 FP32 載入再合併，精度不一致會造成性能下降，且 GGUF 檔案體積也會不必要地變大。
 
 ### llama.cpp
 C++ 實作的推論引擎，支援將 HuggingFace 格式模型轉換成 GGUF，並在 CPU / Apple Silicon 上高效推論。
