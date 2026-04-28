@@ -158,15 +158,20 @@ b0-setup
 - **DoD**：本地有一份 JSON 檔，包含所有中文演講的標題、日期、內文
 
 ### b1b-format｜資料格式化
-- **任務**：把逐字稿解析成 Q&A 對，套用 chat_template，tokenize，印出一筆樣本
+- **任務**：把逐字稿解析成 Q&A 對，套用 chat_template，tokenize，切分資料集，印出一筆樣本
 - **關鍵**：`tokenizer.apply_chat_template()` 插入 Llama 3 的 `<|begin_of_text|>` / `<|eot_id|>` 特殊符號
-- **DoD**：印出一筆完整的 tokenized 樣本，可看到 input_ids 數列
+- **資料切分**（時間切分，避免 data leakage）：
+  - 訓練集 85%：2020–2024 年演講
+  - 驗證集 10%：2025 年演講
+  - 測試集 5%：2026 年演講（b5 唯一用到的時機，訓練全程不碰）
+- **DoD**：印出一筆完整的 tokenized 樣本，可看到 input_ids 數列；三份資料集筆數確認無誤
 
 ### b2-sft｜SFTTrainer 跑通微調
 - **任務**：用 `trl` 的 SFTTrainer 做第一次微調，觀察 loss 下降
 - **記憶體策略**：`gradient_accumulation_steps` + `gradient_checkpointing`
 - **可重現性**：固定 `seed=42`（`TrainingArguments` 的 `seed` 參數），確保 b2 vs b3 結果可比較
-- **DoD**：loss 數值下降，訓練完成不報錯
+- **驗證集**：`SFTTrainer(eval_dataset=val_dataset)`，訓練中同步監控 validation loss，偵測 overfitting
+- **DoD**：train loss 下降；validation loss 同步下降且未出現上揚（即未 overfit）
 
 ### b3-lora｜LoRA 參數高效微調
 - **任務**：用 `peft` 加上 LoRA adapter，比較可訓練參數量
@@ -196,7 +201,7 @@ b0-setup
 - **LLM-as-a-Judge**：請 Claude 或 GPT-4 對「這段回答有多像唐鳳」打 1–10 分，是最直接量測風格的方式；對同一問題取 base model 與 fine-tuned 的回答各一份送給 judge 評分
 - **Overfitting 檢查**：在少量 MMLU 題目上比較 base 與 fine-tuned 分數，確認一般語言能力沒有明顯退化（catastrophic forgetting）
 
-**任務**：對同一批測試問題跑以上四組比較，整理成表格
+**任務**：對 b1b 切出的**測試集**（2026 年演講，訓練全程未見過）跑以上四組比較，整理成表格
 
 **DoD**：
 - 有 base vs b3-lora 的 perplexity、ROUGE 量化數字
