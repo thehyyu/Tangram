@@ -175,12 +175,13 @@ b0-setup
 - **關鍵超參數**：
   - `learning_rate=2e-4`（LLM 微調學習率要極小，太大訓練直接崩）
   - `warmup_ratio=0.1`（前 10% steps 做預熱，防止訓練初期 loss 爆炸）
-  - `max_seq_length=1024`（唐鳳的回答有時很長，先從 1024 開始，不夠再調）
-- **記憶體策略**：`gradient_accumulation_steps=4` + `gradient_checkpointing=True`
+  - `max_seq_length=512`（原定 1024，因 MPS 記憶體限制調降；見下方硬體備註）
+- **記憶體策略**：`gradient_accumulation_steps=4` + `gradient_checkpointing=True` + `optim="adafactor"`
 - **可重現性**：固定 `seed=42`，確保 b2 vs b3 結果可比較
 - **防止 Catastrophic Forgetting**：訓練資料中混入 5% Alpaca 通用對話資料，維持模型原有語言能力
 - **驗證集**：`SFTTrainer(eval_dataset=val_dataset)`，訓練中同步監控 validation loss
 - **監控**：用 WandB（`report_to="wandb"`）觀察 train loss 與 val loss 曲線；val loss 開始回升即停止訓練
+- **硬體備註（M4 Pro 64GB 實測）**：全參數微調在 MPS 上，模型 + 梯度 + AdamW 優化器狀態共佔 ~27GB，加上 macOS 與 Python CPU 端約 60GB，合計超過 88GB 上限導致 OOM。解法：換用 Adafactor 優化器（optimizer states 從 ~25GB 降至 ~2GB）+ max_seq_length 降至 512。核心學習目標「全參數更新、觀察 loss 曲線」不受影響。
 - **DoD**：train loss 下降；validation loss 同步下降且未出現上揚
 
 ### b3-lora｜LoRA 參數高效微調
