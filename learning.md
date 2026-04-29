@@ -56,6 +56,25 @@ b6（Ollama 本地推論）
 
 **Tangram 的曳光彈做什麼**：跳過爬蟲，手寫 10 筆假 Q&A，跑完 format → 1-epoch 微調 → 推論，確認 fine-tune 之後模型的回答和 base model 有可見差異。這一刀切過整個系統最核心的假設，之後才值得花時間去爬 3000 筆真實資料。
 
+### b0b 實作概覽
+
+#### 關鍵套件
+- **`transformers` + `trl`**：載入模型並使用 `SFTTrainer` 簡化微調流程。
+- **`datasets`**：管理訓練資料的格式轉換與 Tokenization。
+- **`torch` (MPS)**：呼叫 Mac 的 GPU 加速，使用 `bfloat16` 確保數值穩定。
+
+#### 執行流程
+1. **載入與測試**：以 `bfloat16` 載入 Llama 3.2-3B 並記錄 Base Model 的原始回答。
+2. **格式化資料**：手寫 10 筆唐鳳風格 Q&A，套用 Llama 3 Chat Template。
+3. **微調訓練**：執行 1 epoch 的監督式微調（SFT）。
+4. **驗證對比**：再次詢問同一個問題，將結果存入 `outputs/b0b_comparison.txt` 以供比對。
+
+#### 訓練機制細節
+- **梯度下降 (Gradient Descent)**：計算模型回答與範例的差距（Loss），微調 30 億個參數中的關鍵權重。
+- **學習率預熱 (Warmup)**：前 10% 步驟緩慢提升學習率，防止初期梯度過大導致模型崩潰。
+- **梯度檢查點 (Gradient Checkpointing)**：不保留所有中間運算結果，用運算時間換取記憶體空間，是 Mac 16GB RAM 跑微調的必要技術。
+- **梯度裁剪 (Max Grad Norm)**：限制單次更新的最大幅度，防止數值暴衝。
+
 ### epoch（訓練輪次）
 **1 epoch = 讓模型把所有訓練資料「看一遍」**。
 
