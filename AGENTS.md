@@ -155,7 +155,10 @@ b0-setup
 ### b1a-scrape｜爬取演講原文
 - **任務**：爬取 `archive.tw/speeches` 所有中文演講頁面，儲存成 raw JSON
 - **限制**：只取繁體中文版；「商周專欄」等非 Q&A 格式需跳過
-- **DoD**：本地有一份 JSON 檔，包含所有中文演講的標題、日期、內文
+- **實際結果**：1213 篇演講，55834 組 Q&A，存於 `data/raw_speeches.json`
+- **HTML 結構**：每個發言是 `<li>` 包 `<a href="/speaker/...">` + 發言文字；唐鳳的 speaker href 含 `%E5%94%90%E9%B3%B3`
+- **過濾策略**：三層過濾（URL 含中文 → 唐鳳出現 → 有 Q&A 結構），無需語言偵測套件
+- **DoD**：✅ 本地有一份 JSON 檔，包含所有中文演講的標題、日期、內文
 
 ### b1b-format｜資料格式化
 - **任務**：把逐字稿解析成 Q&A 對，套用 chat_template，tokenize，切分資料集，印出一筆樣本
