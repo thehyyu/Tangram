@@ -43,6 +43,7 @@ def format_alpaca(sample: dict, tokenizer) -> dict:
 print("載入 tokenizer...")
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, token=TOKEN)
 tokenizer.pad_token = tokenizer.eos_token
+tokenizer.model_max_length = MAX_SEQ_LENGTH
 
 # ── 2. 載入 Tangram 資料集 ────────────────────────────────
 print("載入 Tangram 資料集...")
@@ -72,7 +73,7 @@ print(f"\n載入模型（{DEVICE}, bfloat16）...")
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_ID,
     token=TOKEN,
-    torch_dtype=torch.bfloat16,
+    dtype=torch.bfloat16,
 )
 print(f"  可訓練參數：{sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e9:.2f}B")
 
@@ -104,7 +105,6 @@ training_args = SFTConfig(
     lr_scheduler_type="cosine",
     max_grad_norm=1.0,
     dataset_text_field="text",
-    max_seq_length=MAX_SEQ_LENGTH,
     seed=42,
     report_to=REPORT_TO,
     **extra_args,
