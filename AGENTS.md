@@ -181,8 +181,9 @@ b0-setup
 - **防止 Catastrophic Forgetting**：訓練資料中混入 5% Alpaca 通用對話資料，維持模型原有語言能力
 - **驗證集**：`SFTTrainer(eval_dataset=val_dataset)`，訓練中同步監控 validation loss
 - **監控**：用 WandB（`report_to="wandb"`）觀察 train loss 與 val loss 曲線；val loss 開始回升即停止訓練
-- **硬體備註（M4 Pro 64GB 實測）**：全參數微調在 MPS 上，模型 + 梯度 + AdamW 優化器狀態共佔 ~27GB，加上 macOS 與 Python CPU 端約 60GB，合計超過 88GB 上限導致 OOM。解法：換用 Adafactor 優化器（optimizer states 從 ~25GB 降至 ~2GB）+ max_seq_length 降至 512。核心學習目標「全參數更新、觀察 loss 曲線」不受影響。
-- **DoD**：train loss 下降；validation loss 同步下降且未出現上揚
+- **硬體備註（M4 Pro 64GB 實測）**：b2 全參數微調無法在此機器上執行。根本原因：`other allocations`（Python runtime + 虛擬記憶體映射）固定佔用 71GB，加上 MPS 訓練約 16GB，合計 87GB，剩餘 1.26GB 不足以支撐 lm_head 的 `grad²` 計算（需 1.47GB）。已試過 Adafactor、max_seq_length=512、low_cpu_mem_usage=True，均無法解決。**決定跳過實際執行，直接進 b3-lora。**
+- **b5 影響**：base → b2-sft 的比較改用文獻數據補充說明，b2-sft → b3-lora 的對比以 b3-lora 結果為主。
+- **DoD**：（已跳過）學習目標透過排查過程完整記錄於 learning.md
 
 ### b3-lora｜LoRA 參數高效微調
 - **任務**：用 `peft` 加上 LoRA adapter，比較可訓練參數量
@@ -196,14 +197,14 @@ b0-setup
 
 ### b5-eval｜效果評估
 
-**比較矩陣**：這個專案產出 3 個訓練變體，評估時要回答三個問題：
+**比較矩陣**：b2-sft 因 M4 Pro 64GB MPS 記憶體限制無法執行，評估以實際產出的模型為主：
 
 | 比較組 | 問的問題 | 主要指標 |
 |--------|---------|---------|
-| base → b2-sft | 全參數微調有沒有學到唐鳳風格？ | Perplexity、ROUGE、LLM-as-a-Judge |
-| b2-sft → b3-lora | LoRA 用 1% 參數能達到接近效果嗎？ | 同上 |
+| base → b3-lora | 微調後風格有沒有改變？ | Perplexity、ROUGE、LLM-as-a-Judge |
 | b3-lora → b4-qlora | 4-bit 量化損失多少品質？ | 同上 |
 | b6（無 RAG）→ b7（有 RAG） | RAG 有沒有減少幻覺？ | 引用準確度、人工核對 |
+| （文獻補充）Full SFT vs LoRA | LoRA 以 1% 參數能達到接近效果嗎？ | 引用 LoRA 論文數據，說明為何不執行 b2 |
 
 **指標說明**：
 
@@ -217,7 +218,7 @@ b0-setup
 **視覺化產出（Blog 用）**：以下 5 張圖為 b5 必交付物，存入 `blog/assets/`
 
 **圖 1 — Loss Curve（訓練健康度）**
-- 從 b2-sft / b3-lora 訓練 log 取 `trainer.state.log_history`，畫 train loss 與 val loss 雙折線
+- 從 b3-lora 訓練 log 取 `trainer.state.log_history`，畫 train loss 與 val loss 雙折線（b2-sft 因硬體限制未執行，不納入）
 - X 軸：steps；Y 軸：loss；標出 early stopping 點（val loss 開始回升處）
 - 工具：`matplotlib`；WandB 截圖可作為補充，但需額外輸出靜態 PNG 存檔
 
@@ -245,10 +246,10 @@ b0-setup
 - 工具：`matplotlib` polar chart
 
 **圖 5 — ROUGE / Perplexity 跨版本對比圖**
-- X 軸：4 個模型版本（Base / b2-sft / b3-lora / b4-qlora）
+- X 軸：3 個模型版本（Base / b3-lora / b4-qlora）；b2-sft 欄以「硬體限制，未執行」標注
 - Y 軸左：ROUGE-L score；Y 軸右：Perplexity（雙軸折線或分組條形圖）
 - 工具：`evaluate` 套件 + `rouge_score`；Perplexity 用 held-out 唐鳳演講集計算
-- 目的：讓讀者看出 LoRA 以 1% 參數達到接近 SFT 的效果，QLoRA 的量化損失幅度
+- 目的：呈現 base → LoRA 的風格改變幅度，以及 QLoRA 的量化損失幅度
 
 **DoD**：
 - 有 base vs b3-lora 的 perplexity、ROUGE 量化數字
