@@ -6,6 +6,7 @@ __pycache__/
 checkpoints/
 ~/.cache/huggingface/
 runs/
+wandb/
 outputs/
 data/
 .python-version
