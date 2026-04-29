@@ -16,11 +16,11 @@ CHECKPOINT_DIR = Path("checkpoints/b2")
 OUTPUT_LOG = Path("outputs/b2_sft_log.json")
 
 ALPACA_RATIO = 0.05
-MAX_SEQ_LENGTH = 1024
+MAX_SEQ_LENGTH = 512
 DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
 
-# WandB 有設定才啟用，否則落回 none
-REPORT_TO = "wandb" if os.getenv("WANDB_API_KEY") else "none"
+# key 存在 ~/.netrc（wandb login 的預設位置），直接啟用
+REPORT_TO = "wandb"
 
 # ── Smoke Test 旗標 ───────────────────────────────────────
 # True  → 只跑 100 steps、取前 500 筆，確認鏈路通再放夜跑
@@ -98,6 +98,7 @@ training_args = SFTConfig(
     per_device_train_batch_size=1,
     per_device_eval_batch_size=1,
     gradient_accumulation_steps=4,       # 有效 batch size = 4
+    optim="adafactor",                   # AdamW optimizer states ~25GB → Adafactor ~2GB
     gradient_checkpointing=True,
     gradient_checkpointing_kwargs={"use_reentrant": False},
     learning_rate=2e-4,
