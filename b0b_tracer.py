@@ -63,9 +63,9 @@ def get_response(model, tokenizer, question: str) -> str:
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": question},
     ]
-    input_ids = tokenizer.apply_chat_template(
-        messages, return_tensors="pt", add_generation_prompt=True
-    ).to(DEVICE)
+    # apply_chat_template 先套格式（tokenize=False），再用 tokenizer 轉成 tensor
+    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    input_ids = tokenizer(text, return_tensors="pt")["input_ids"].to(DEVICE)
     with torch.no_grad():
         output = model.generate(input_ids, max_new_tokens=200, do_sample=False)
     return tokenizer.decode(output[0][input_ids.shape[1]:], skip_special_tokens=True)
@@ -87,17 +87,19 @@ tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, token=TOKEN)
 tokenizer.pad_token = tokenizer.eos_token
 
 model = AutoModelForCausalLM.from_pretrained(
-    MODEL_ID, token=TOKEN, torch_dtype=torch.float16
+    MODEL_ID, token=TOKEN, dtype=torch.bfloat16
 ).to(DEVICE)
 
 # ── 2. Base model 回答 ────────────────────────────────────
 print(f"\n測試問題：{TEST_QUESTION}")
 print("\n" + "=" * 50)
 print("Base Model 回答：")
-print(get_response(model, tokenizer, TEST_QUESTION))
+base_response = get_response(model, tokenizer, TEST_QUESTION)
+print(base_response)
 
 # ── 3. 準備訓練資料 ───────────────────────────────────────
 print("\n準備訓練資料...")
+tokenizer.model_max_length = 512  # 限制訓練時的最大序列長度
 dataset = Dataset.from_list([format_for_training(qa, tokenizer) for qa in FAKE_QA])
 print(f"訓練樣本數：{len(dataset)}")
 
@@ -108,12 +110,12 @@ training_args = SFTConfig(
     output_dir="./checkpoints/b0b",
     num_train_epochs=1,
     per_device_train_batch_size=1,
-    gradient_accumulation_steps=4,  # 實際 batch size = 1 * 4 = 4
+    gradient_accumulation_steps=1,  # tracer 只有 10 筆，accumulation=1 才有足夠步驟讓 warmup 生效
     gradient_checkpointing=True,    # 用時間換記憶體：不保留中間層的激活值，需要時重算
     gradient_checkpointing_kwargs={"use_reentrant": False},
-    learning_rate=2e-4,
+    learning_rate=2e-5,             # b0b 只需看到差異，learning rate 保守一點避免梯度爆炸
     warmup_ratio=0.1,
-    max_seq_length=512,
+    max_grad_norm=1.0,              # 梯度裁剪，防止 grad_norm 暴衝
     dataset_text_field="text",
     seed=42,
     report_to="none",
@@ -133,6 +135,19 @@ trainer.train()
 print("\n" + "=" * 50)
 print("Fine-tuned 回答：")
 model.eval()
-print(get_response(model, tokenizer, TEST_QUESTION))
+ft_response = get_response(model, tokenizer, TEST_QUESTION)
+print(ft_response)
 print("\n" + "=" * 50)
 print("DoD：兩段回答出現可見差異 → b0b-tracer 完成")
+
+# ── 6. 存檔（AI 協作守則第 8 條）────────────────────────────
+os.makedirs("outputs", exist_ok=True)
+with open("outputs/b0b_comparison.txt", "w", encoding="utf-8") as f:
+    f.write(f"測試問題：{TEST_QUESTION}\n")
+    f.write("\n" + "=" * 50 + "\n")
+    f.write("Base Model 回答：\n")
+    f.write(base_response + "\n")
+    f.write("\n" + "=" * 50 + "\n")
+    f.write("Fine-tuned 回答：\n")
+    f.write(ft_response + "\n")
+print("\n結果已存至 outputs/b0b_comparison.txt")
