@@ -309,9 +309,27 @@ llama.cpp 使用的模型檔案格式，把模型壓縮成單一檔案，Ollama 
 
 > 做完一個 branch 後，把「踩到什麼坑」和「為什麼這樣解」記在這裡。
 
-<!-- 格式參考：
-### b0（2026-04-28）
-- 問題：`device="mps"` 時 pipeline 報錯
-- 原因：model.half() 在 MPS 上有問題，改用 float32
-- 學到：MPS 不是 CUDA，某些操作要特別注意 dtype
--->
+### b0b（2026-04-29）
+
+**坑 1：`apply_chat_template` 回傳 `BatchEncoding`，不是純 tensor**
+- 問題：`model.generate(input_ids, ...)` 報 `AttributeError`，找不到 `.shape`
+- 原因：新版 transformers 的 `apply_chat_template(return_tensors="pt")` 回傳的是 `BatchEncoding` 物件（像 dict），不是純 tensor；`model.generate` 期待純 tensor
+- 解法：兩步走——先 `tokenize=False` 取格式字串，再用 `tokenizer(text, return_tensors="pt")["input_ids"]` 轉 tensor
+- 學到：API 行為會隨版本變動，遇到 `AttributeError` 先確認型別
+
+**坑 2：`max_seq_length` 在 TRL 1.3.0 已從 `SFTConfig` 移除**
+- 問題：`TypeError: SFTConfig.__init__() got an unexpected keyword argument 'max_seq_length'`
+- 解法：改成在 tokenizer 上設定 `tokenizer.model_max_length = 512`
+- 學到：套件升版時參數名稱會搬家，遇到 `unexpected keyword argument` 查 changelog
+
+**坑 3：float16 在 MPS 上訓練數值不穩定**
+- 問題：即使加了 `max_grad_norm=1.0`，loss 仍從正常值暴衝到 500+，最後 `grad_norm: nan`、`loss: 0`，模型完全崩潰
+- 原因：float16 的動態範圍太窄（最大約 65504），梯度稍大就溢位成 inf/NaN；CUDA 有硬體層的 loss scaling 保護，MPS 沒有
+- 解法：改用 `dtype=torch.bfloat16`——bfloat16 和 float32 有一樣的動態範圍（不溢位），只是尾數精度低一點，MPS 完全支援
+- 學到：MPS 上訓練一律用 bfloat16，不用 float16；同時 `torch_dtype` 已棄用，改用 `dtype`
+
+**坑 4：梯度爆炸（gradient accumulation 壓縮步驟數）**
+- 問題：loss 在第 3 步從 3.67 暴衝到 9597，`grad_norm: inf`，fine-tuned 輸出亂碼
+- 原因：10 筆資料 ÷ `gradient_accumulation_steps=4` = 只有 3 個更新步驟，`warmup_ratio=0.1` 對應到 0.3 步，等於沒有 warmup；學習率從一開始就全速，模型無法適應
+- 解法：`gradient_accumulation_steps=1`（讓 10 筆資料變成 10 步），`learning_rate` 從 `2e-4` 降到 `2e-5`，加上 `max_grad_norm=1.0` 裁剪梯度
+- 學到：`gradient_accumulation_steps` 會壓縮步驟數，資料量少時要特別注意；warmup 需要足夠的步驟才能發揮作用；小資料集用保守的 learning rate

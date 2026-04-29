@@ -302,6 +302,7 @@ b0-setup
 5. **資料格式驗證**：b1b 做完後，幫驗證至少一筆 tokenized 樣本的格式是否符合 Llama 3 chat template 規格。
 6. **不要跳步驟**：每個 branch 有 DoD，DoD 沒達到不要往下一個 branch 推。
 7. **選擇性測試**：只對純函數寫 assert（資料格式化、tokenization 檢查、RAG 查詢回傳筆數）。訓練迴圈和模型輸出風格靠 DoD 人工驗收，不強行套 TDD。
+8. **關鍵輸出存檔**：每個 branch 完成後，把關鍵輸出存成檔案（不只印在終端機），方便跨 branch 比較與 blog 取材。命名規則：`outputs/b0b_comparison.txt`、`outputs/b5_eval.json`，依此類推。
 
 ## 工作流規約：/ship (發布任務)
 
