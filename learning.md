@@ -232,6 +232,80 @@ Tangram 從 1024 開始測試——唐鳳的回答有時很長，如果發現截
 
 LoRA 天生比 Full SFT 更抗 Catastrophic Forgetting（因為沒有動到原始權重），但混入通用資料仍是好習慣。
 
+### 全參數微調的記憶體需求（為什麼需要 24–32GB？）
+
+微調一個 3B 模型時，記憶體不只是「存模型本身」而已，實際分三塊：
+
+| 佔用來源 | 大小估算 | 說明 |
+|---------|---------|------|
+| 模型權重（BF16） | ~6GB | 30億 參數 × 2 bytes |
+| 梯度 | ~6GB | 每個參數都要算梯度，dtype 同模型 |
+| AdamW 優化器狀態 | ~12GB | 每個參數存一階矩 + 二階矩，各 4 bytes |
+| 合計 | **~24GB** | 還不含激活值 |
+
+**為什麼優化器狀態這麼大？**
+
+AdamW 記錄的不只是「現在要往哪走」（梯度），還記錄「過去平均走了多快」（一階矩）和「過去波動有多大」（二階矩），這兩份統計讓它走得更穩、更快收斂。代價就是每個參數額外存兩個 float32 數字。
+
+**gradient_checkpointing 解決的是哪塊？**
+
+上表沒算進激活值——前向傳播時每一層的中間結果，這是記憶體第四大來源。`gradient_checkpointing=True` 會丟掉大部分激活值，需要時重算，讓訓練記憶體降低 60–70%，但多花約 30% 計算時間。**這是 b2 能在 Mac 上跑的關鍵之一。**
+
+**OOM 時怎麼辦？**
+
+直接跳 b3-lora——LoRA 只訓練約 1% 的參數，優化器狀態縮小 99%，記憶體需求從 24GB 降到 ~7GB。這也是 LoRA 在消費級硬體上普及的最主要原因。
+
+### 訓練時間估算
+
+b2 的訓練量：11,681 筆（Tangram） + ~584 筆（Alpaca） ≈ 12,265 筆，跑 3 epochs。
+
+影響時間的關鍵參數：
+- `per_device_train_batch_size=1`：每次只看 1 筆（記憶體限制）
+- `gradient_accumulation_steps=4`：累積 4 筆才更新一次，等效 batch size = 4
+- 每 epoch 約 12,265 個 forward + backward pass
+
+**Mac mini Apple Silicon 上的粗估**：每個 step（前向 + 反向 + 梯度累積）約 1–3 秒，3 epochs 約 12,000–36,000 步，合計 **3–10 小時不等**。序列長度越長、模型越大就越慢。
+
+**實際建議**：
+
+```bash
+# 跑之前先估一下速度：看前 50 steps 的 it/s
+# WandB dashboard 的 "samples/sec" 就是這個數字
+```
+
+`it/s < 0.5` 代表非常慢，考慮：
+1. 確認 `gradient_checkpointing=True` 有開
+2. 縮短 `max_seq_length`（從 1024 降到 512）
+3. 或接受現實讓它跑過夜
+
+### EarlyStopping（早停機制）
+
+**問題**：訓練太多 epoch，模型就只會「背」訓練資料，對沒見過的問題反而表現更差——這叫 overfitting。
+
+**訊號**：train loss 繼續下降，但 **val loss 開始回升**，兩線分叉的那一刻就是過擬合開始的地方。
+
+```
+loss
+  │  train ──────────────────
+2 │                          ─────────
+  │  val ────────────────
+1 │                      ──
+  │                          ↑ val 開始回升：該停了
+  └──────────────────────────────── epoch
+                           1    2    3
+```
+
+**b2 的設定**：
+
+```python
+EarlyStoppingCallback(early_stopping_patience=2)
+# → val loss 連續 2 個 epoch 沒改善，自動停止訓練
+```
+
+搭配 `load_best_model_at_end=True`，訓練結束後自動載回「val loss 最低那個 checkpoint」，不是最後一個 epoch 的。最佳 checkpoint 存在 `checkpoints/b2/best/`。
+
+**patience=2 的意思**：給模型兩次機會。有時 val loss 小幅回升只是暫時波動，patience=1 太敏感會過早停止；patience=2 確認連續兩次都沒改善才停。
+
 ### 梯度下降（Gradient Descent）
 模型訓練的核心機制。每次看完一筆資料，計算答案有多錯（loss），然後往「讓 loss 變小的方向」調整參數。
 
@@ -241,6 +315,22 @@ LoRA 天生比 Full SFT 更抗 Catastrophic Forgetting（因為沒有動到原�
 - 太大 → 步伐越過山谷，loss 爆炸崩潰
 - 太小 → 走太慢，或卡在半山腰的小凹陷出不來
 - LLM 微調用 `2e-4`，極小——因為模型已經在山谷附近，走太大步會破壞原有知識
+
+### batch size 與有效 batch size
+
+`per_device_train_batch_size × gradient_accumulation_steps = 有效 batch size`
+
+b2 的設定：`1 × 4 = 4`。
+
+| 小 batch（1–4）| 大 batch（16–32）|
+|--------------|----------------|
+| 梯度雜訊多、更新頻繁 | 梯度方向穩、更新次數少 |
+| 容易探索細微模式 | 收斂穩但可能過於保守 |
+| 記憶體少 | 記憶體多 |
+
+**風格微調選小 batch 的理由**：風格是「細節」不是「規律」，帶雜訊的梯度更新幫助模型探索細微語言模式，而不是只記住最顯眼的詞彙。11,681 筆資料 ÷ 有效 batch 4 ≈ 每 epoch 3,000 次更新，已足夠。
+
+**調整時機**：看完 smoke test 的 WandB，如果 `grad_norm` 持續大幅波動，才考慮把 `gradient_accumulation_steps` 從 4 調高到 8，不需要提前改。
 
 ### gradient accumulation（梯度累積）
 記憶體不夠時，把多個小批次的梯度加總才更新一次參數，效果等同更大的 batch size。
