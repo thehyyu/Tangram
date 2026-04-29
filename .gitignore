@@ -6,4 +6,5 @@ __pycache__/
 checkpoints/
 ~/.cache/huggingface/
 runs/
+outputs/
 .python-version
