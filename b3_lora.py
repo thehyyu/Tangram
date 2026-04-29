@@ -24,7 +24,7 @@ REPORT_TO = "wandb"
 # ── Smoke Test 旗標 ───────────────────────────────────────
 # True  → 只跑 100 steps、取前 500 筆，確認鏈路通再放夜跑
 # False → 正式訓練（3 epochs、全資料）
-SMOKE_TEST = True
+SMOKE_TEST = False
 
 
 def format_alpaca(sample: dict, tokenizer) -> dict:
