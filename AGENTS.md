@@ -303,6 +303,21 @@ b0-setup
 6. **不要跳步驟**：每個 branch 有 DoD，DoD 沒達到不要往下一個 branch 推。
 7. **選擇性測試**：只對純函數寫 assert（資料格式化、tokenization 檢查、RAG 查詢回傳筆數）。訓練迴圈和模型輸出風格靠 DoD 人工驗收，不強行套 TDD。
 
+## 工作流規約：/ship (發布任務)
+
+當使用者下達 `/ship` 或要求「整理並提交變更」時，必須嚴格執行以下流程：
+
+1. **分組盤點**：使用 `git status` 與 `git diff` 分析目前所有未提交的變更。
+2. **邏輯拆分**：禁止 `git add .`。必須按功能邏輯（如：infra, feat, docs, fix）分組，確保每個 commit 僅包含相關檔案。
+3. **格式規範**：使用 **繁體中文** 撰寫 commit message，並遵循 **Conventional Commits** 格式：
+   - `feat:` 新功能
+   - `fix:` 修補 bug
+   - `docs:` 文件變更
+   - `build:` 構建系統、依賴項變更
+   - `refactor:` 重構
+4. **逐批提交**：分次執行 `git add` + `git commit`。
+5. **最終發布**：所有分組提交完成後，執行 `git push`。
+
 ---
 
 ## 參考資料對應
