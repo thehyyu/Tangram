@@ -74,6 +74,7 @@ model = AutoModelForCausalLM.from_pretrained(
     MODEL_ID,
     token=TOKEN,
     dtype=torch.bfloat16,
+    low_cpu_mem_usage=True,   # 跳過 CPU 暫存複本，直接載入目標 dtype
 )
 print(f"  可訓練參數：{sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e9:.2f}B")
 
