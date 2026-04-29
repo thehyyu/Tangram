@@ -7,4 +7,5 @@ checkpoints/
 ~/.cache/huggingface/
 runs/
 outputs/
+data/
 .python-version
