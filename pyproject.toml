@@ -5,10 +5,16 @@ description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
     "accelerate>=1.13.0",
+    "anthropic>=0.97.0",
     "beautifulsoup4>=4.14.3",
+    "bitsandbytes>=0.49.2",
     "datasets>=4.8.5",
+    "evaluate>=0.4.6",
+    "jieba>=0.42.1",
+    "matplotlib>=3.10.9",
     "peft>=0.19.1",
     "python-dotenv>=1.2.2",
+    "rouge-score>=0.1.2",
     "torch>=2.11.0",
     "tqdm>=4.67.3",
     "transformers>=5.7.0",

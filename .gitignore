@@ -1,12 +1,31 @@
+# Local environment
 .env
 .venv/
+.python-version
+
+# Python artifacts
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+.ipynb_checkpoints/
+
+# Models & Large Data (Repo size control)
 *.gguf
 *.safetensors
 checkpoints/
+data/
+outputs/
 ~/.cache/huggingface/
+
+# Logs & Visualization
 runs/
 wandb/
-outputs/
-data/
-.python-version
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+Desktop.ini
