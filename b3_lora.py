@@ -100,7 +100,7 @@ if SMOKE_TEST:
     print("\n[Smoke Test] max_steps=100，確認鏈路後將 SMOKE_TEST 改為 False 跑正式訓練")
 else:
     extra_args = dict(logging_steps=50, eval_strategy="epoch",
-                      save_strategy="steps", save_steps=500,
+                      save_strategy="epoch",
                       load_best_model_at_end=True,
                       metric_for_best_model="eval_loss", greater_is_better=False,
                       run_name="tangram-b3-lora")
