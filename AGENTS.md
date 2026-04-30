@@ -203,7 +203,10 @@ b0-setup
   - WandB API key 需 40 字元以上，從 wandb.ai → User Settings → API keys 取得
   - 每次用完記得 Runtime → Manage sessions → Terminate，避免佔用 session 配額
   - **cell 排隊陷阱**：訓練中不小心再按一次執行鍵會排隊，第一次跑完後立刻重跑，導致 `train_result` 被覆蓋（第二次被中斷時未定義）；儲存 log 前須確認 `train_result` 存在
-- **DoD**：Colab notebook 跑通，有 loss 數值輸出，`outputs/b4_qlora_log.json` 已下載回本機
+- **完成狀態**：✅ DoD 達成（2026-04-30）
+  - Colab notebook 跑通，1 epoch / 1000 筆，trainable_ratio = 0.127% < 1% ✓
+  - `outputs/b4_qlora_log.json` 已下載回本機（train_loss / eval_loss 因 cell 排隊問題為 null，loss 曲線數據存於 history）
+  - `checkpoints/b4/adapter/` 已下載回本機（b5-eval 量化損失對比用）
 
 ### b5-eval｜效果評估
 
@@ -260,6 +263,7 @@ b0-setup
 - Y 軸左：ROUGE-L score；Y 軸右：Perplexity（雙軸折線或分組條形圖）
 - 工具：`evaluate` 套件 + `rouge_score`；Perplexity 用 held-out 唐鳳演講集計算
 - 目的：呈現 base → LoRA 的風格改變幅度，以及 QLoRA 的量化損失幅度
+- **b4-qlora 推論方案**：官方 bitsandbytes 僅支援 CUDA；社群開發的 `mps-bitsandbytes` 提供 Apple Silicon 相容 API，待測試是否可在 MPS 上載入 4-bit 模型進行推論；若不可行則改用 Colab notebook 跑 b4 的推論評估
 
 **DoD**：
 - 有 base vs b3-lora 的 perplexity、ROUGE 量化數字
@@ -312,7 +316,7 @@ b0-setup
 
 1. **每個 branch 獨立問**：不要一次問跨 branch 的問題，每個 branch 有自己的 DoD，做完才進下一個。
 2. **程式碼優先，解釋其次**：先給可以跑的 code snippet，術語解釋放在 comment 或事後問。
-3. **MPS 限制要說清楚**：遇到 `bitsandbytes` / CUDA-only 的東西，直接告知需要切換到 Colab，不要試著在 Mac 上繞行。
+3. **MPS 相容性：先評估，再決定**：遇到 CUDA-only 套件時，先確認是否有官方或社群維護的 MPS 相容版本。**推論（inference）**：若官方套件有 MPS 支援，或社群 fork 近 6 個月內有更新，優先嘗試本機執行。**訓練（training）**：4-bit 量化訓練仍建議在 Colab T4，MPS 反向傳播支援不穩定。**時間限制**：本機嘗試若 30 分鐘內無法解決則切換 Colab，不要無限繞行。
 4. **debug 時給完整 traceback**：不要只貼最後一行錯誤，完整 traceback 才能定位問題。
 5. **資料格式驗證**：b1b 做完後，幫驗證至少一筆 tokenized 樣本的格式是否符合 Llama 3 chat template 規格。
 6. **不要跳步驟**：每個 branch 有 DoD，DoD 沒達到不要往下一個 branch 推。

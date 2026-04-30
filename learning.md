@@ -376,7 +376,13 @@ LoRA 訓練出來的那組小矩陣，可以單獨儲存（只有幾十 MB），
 Quantization + LoRA 的組合。先把 base model 量化成 4-bit 減少記憶體，再用 LoRA 只訓練 adapter，讓消費級 GPU 也能微調大模型。
 
 ### bitsandbytes
-實現 4-bit 量化的函式庫。**目前不支援 Mac MPS，只能在 CUDA GPU 上跑** → 需切換到 Google Colab T4。
+實現 4-bit 量化的函式庫。官方版本針對 NVIDIA CUDA 設計，**不支援 Mac MPS** → 訓練需切換到 Google Colab T4。
+
+### mps-bitsandbytes
+社群開發的 Apple Silicon 相容封裝，提供與官方 bitsandbytes 相同的 API 介面，讓 4-bit 量化模型可在 MPS 上執行。
+- **用途**：b5-eval 推論評估（載入 b4-qlora adapter 進行生成比較），不適用訓練
+- **風險**：社群 fork，非官方維護，穩定性不如 CUDA 版本；b4 adapter 是用 CUDA 訓練的，cross-backend 載入需實測確認
+- **決策**：先試 mps-bitsandbytes，若不可行再退回 Colab notebook 跑 b4 推論
 
 ### NF4（NormalFloat 4-bit）
 QLoRA 論文提出的 4-bit 量化格式，比一般 INT4 在訓練時數值更穩定。
