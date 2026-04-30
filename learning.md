@@ -620,7 +620,19 @@ train_loss (2.12) < eval_loss (2.39)，差距約 0.27，token accuracy 差距約
 - 解法：去 wandb.ai → User Settings → API keys 重新複製完整 key，或點 New key 生成新的
 - 學到：貼 token/key 時要確認字數，Colab Secrets 輸入框不會顯示長度提示
 
-**坑 4：Colab 工作階段過多**
+**坑 5：Colab 免費配額不夠跑全量訓練（實際比預估更緊）**
+- 問題：smoke test 實測 19 秒/step，推算全量 1 epoch（~3000 steps）需要約 16 小時；第一次縮到 5000 筆估算 2–2.5 小時，但實際帳號配額只有 2.5 小時（非預估的 3.5 小時），正式訓練速度又降至 50 秒/step，估算直接跳到 8.5 小時
+- 解法：再砍至 1000 筆（約 125 steps），實測約 1.5–1.7 小時，在 2.5 小時配額內完成
+- b5 影響：b4 的 ROUGE/Perplexity 數字會比 b3 低（訓練資料少），但「量化損失幅度」的對比仍然有效，因為兩組都在同樣的評估集上測
+- 學到：Colab 的實際可用 GPU 時數因帳號使用狀況而異，比官方說明更少；跑大訓練前先用 smoke test 估算 step 時間，並保留至少 30% 緩衝；資料量要分兩段估：「煙霧測試速度」≠「正式訓練速度」（正式訓練有 eval、checkpoint 儲存等額外開銷）
+- **決策原則（成本驅動）**：在免費資源有限的情況下，優先確保「流程跑通」而非「資料量充足」。b4 的核心價值是驗證 QLoRA 工程流程，不是產出最好的模型。犧牲資料量換取在配額內完成，是合理的取捨。若未來要比較完整的量化損失，可在 Colab Pro 或有更多配額時重跑全量版本。
+
+**坑 6：cell 排隊執行兩次導致 `train_result` 遺失**
+- 問題：訓練過程中不小心再按了一次 cell 10 的執行鍵 → Colab 排隊機制讓第一次跑完後立刻重跑 → 第二次被中斷，`train_result` 未定義 → cell 11 的 `train_result.metrics.get(...)` 拋出 `NameError`
+- 解法：adapter 已存（save_pretrained 在 NameError 之前執行），手動補存 log，將 `train_runtime_sec` 和 `train_loss` 設為 `None`，`history` 用 `trainer.state.log_history` 補入
+- 學到：Colab 的「排隊」不是即時執行而是等前一個 cell 完成才觸發，看起來像「自動重跑」；避免方法是訓練跑完前不要碰執行鍵，或在 cell 11 加 `try/except` 保護 `train_result` 的存取
+
+**坑 4（原坑 4）：Colab 工作階段過多**
 - 問題：`執行中的工作階段過多，請終止一個現有的工作階段以繼續`
 - 原因：之前開過的 Colab session 沒有手動關閉，免費版有同時 session 數量上限
 - 解法：Runtime → Manage sessions → 終止舊 session

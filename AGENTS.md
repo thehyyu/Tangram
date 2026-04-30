@@ -193,7 +193,7 @@ b0-setup
 ### b4-qlora｜4-bit 量化微調（Colab）
 - **任務**：在 Google Colab T4 GPU 上跑 QLoRA，體驗完整量化微調流程
 - **關鍵**：`BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4")` + `prepare_model_for_kbit_training()`
-- **訓練規模**：1 epoch（Colab 免費 session 上限約 4–5 小時，1 epoch ≈ 1.5–2 小時）
+- **訓練規模**：1 epoch，**1000 筆**（約 2% 訓練集）；全量訓練實測約 16 小時，遠超 Colab 免費配額；實際免費配額約 2.5 小時（因帳號用量而異），5000 筆仍超時，最終以 1000 筆完成；b4 目的是跑通 QLoRA 流程，不需全量資料
 - **關鍵輸出**（訓練完成後下載回本機）：
   - `outputs/b4_qlora_log.json`：train loss、eval loss、runtime、可訓練參數量
   - `checkpoints/b4/adapter/`：LoRA adapter 權重（b5-eval 量化損失對比用）
@@ -202,6 +202,7 @@ b0-setup
   - cell 執行順序：載入模型 → **套 LoRA adapter** → smoke test → 正式訓練（LoRA 必須在 smoke test 之前）
   - WandB API key 需 40 字元以上，從 wandb.ai → User Settings → API keys 取得
   - 每次用完記得 Runtime → Manage sessions → Terminate，避免佔用 session 配額
+  - **cell 排隊陷阱**：訓練中不小心再按一次執行鍵會排隊，第一次跑完後立刻重跑，導致 `train_result` 被覆蓋（第二次被中斷時未定義）；儲存 log 前須確認 `train_result` 存在
 - **DoD**：Colab notebook 跑通，有 loss 數值輸出，`outputs/b4_qlora_log.json` 已下載回本機
 
 ### b5-eval｜效果評估
