@@ -8,9 +8,13 @@
 
 目標是把一個技術概念丟進去，模型能以唐鳳的方式輸出一段讓非技術背景的人也能讀懂的說明。
 
+**專案轉向聲明 (2026-04-30)**：
+本專案已完成從爬蟲、微調到部署的完整工程鏈路。然而，由於訓練資料中包含 HTML 殘留標記（如 `Link in context`）且資料量經量化壓縮後不足，導致模型輸出品質未達預期（出現重複迴圈與雜訊）。
+我們決定將專案目標從「產出完美助理」轉向**「初次微調模型的失敗經驗與工程反思」**。這是一個極具價值的學習型專案，記錄了所有遇到的技術坑洞與決策權衡。
+
 ---
 
-## 最終架構
+## 最終架構（已完成部分）
 
 整個系統分兩條線：**離線訓練** 和 **線上推論**。
 
@@ -39,35 +43,6 @@ archive.tw/speeches（唐鳳演講逐字稿，CC0）
                    ollama create tangram（本地可對話）
 ```
 
-### 線上推論流程（b7 加入 RAG 後）
-
-```
-使用者輸入（一段技術概念）
-     │
-     ▼ sentence-transformers（embedding）
-  查詢向量
-     │
-     ▼ chromadb 向量搜尋
-  相關演講段落 top-k chunks
-     │
-     ▼ 組裝 prompt
-  system: 你是唐鳳，以下是她說過的話：{chunks}
-  user:   {使用者輸入}
-     │
-     ▼ Tangram（HF Spaces，CPU 推論）
-  輸出：以唐鳳風格解釋的說明
-     │
-     ▼ Gradio UI（b9）
-  公開 demo 頁面（每 session 限制 10 次）
-```
-
-### 為什麼要兩個機制並用？
-
-| 機制 | 負責的事 | 沒有它會怎樣 |
-|------|---------|------------|
-| Fine-tune | 學唐鳳「怎麼說」（風格、句式、論述結構） | 輸出像一般 AI，沒有她的味道 |
-| RAG | 引用她真實說過的話（事實錨定） | 模型會「幻覺」，捏造她沒說過的內容 |
-
 ---
 
 ## Tech Stack
@@ -80,291 +55,81 @@ archive.tw/speeches（唐鳳演講逐字稿，CC0）
 | 資料 | `datasets` | 格式化與 tokenize |
 | 訓練 | `trl` SFTTrainer | 包好訓練迴圈與 loss 計算 |
 | 微調 | `peft` LoRA | 參數高效微調，adapter < 1% 參數 |
-| 量化 | `bitsandbytes` | 4-bit QLoRA，僅 Colab T4（MPS 不支援） |
-| 評估 | `evaluate` + `rouge_score` | ROUGE / perplexity |
+| 量化 | `bitsandbytes` | 4-bit QLoRA，僅 Colab T4 |
+| 評估 | `rouge_score` + `google-generativeai` | ROUGE-L (CJK) / LLM-as-a-Judge |
 | 部署 | `llama.cpp` → `ollama` | GGUF 轉換 + 本地推論 |
-| RAG | `chromadb` + `sentence-transformers` | 本地向量資料庫 |
-| 發布 | `huggingface_hub` | 上傳 adapter + model card |
-| Demo | `gradio` | HF Spaces 公開 demo，含 rate limiting |
 
-**起始模型**：`meta-llama/Llama-3.2-3B-Instruct`（Meta 出品，3B 參數，MPS 相容）  
-**硬體**：Mac mini Apple Silicon（MPS），b4 需 Google Colab T4
+**起始模型**：`meta-llama/Llama-3.2-3B-Instruct`  
+**硬體**：Mac mini Apple Silicon (M4 Pro)，Colab T4 (b4 專用)
 
 ---
 
-## 前置準備
+## Branch 規格與實作紀錄
 
-開始任何 branch 前需確認：
-
-**HuggingFace Token**
-Llama 3 是 gated model，需先到 HF 申請存取權限，再設定環境變數：
-```bash
-# .env（不 commit）
-HF_TOKEN=hf_xxxxxxxxxxxxxxxx
-```
-
-**`.gitignore`**
-以下絕對不進 git（單個檔案動輒數 GB）：
-```
-.env
-.venv/
-__pycache__/
-*.gguf
-*.safetensors
-checkpoints/
-~/.cache/huggingface/   # HF 模型快取在本機，不在 repo 裡
-runs/                   # tensorboard logs
-```
-
----
-
-## Branch DAG
-
-```
-b0-setup
-  └── b0b-tracer         手寫假資料 → format → 1-epoch 微調 → base vs fine-tuned 對比
-        └── b1a-scrape    爬取唐鳳演講頁面 → raw JSON
-              └── b1b-format    解析 Q&A → chat template 格式
-                    └── b2-sft        SFTTrainer 跑通微調
-                          └── b3-lora       換 LoRA，降低可訓練參數
-                                └── b4-qlora*     4-bit QLoRA（Colab T4）
-                                      └── b5-eval       before/after 效果對比
-                                            └── b6-deploy     GGUF → Ollama 本地跑
-                                                  └── b7-rag        加上 RAG 事實錨定
-                                                        └── b8-hub        HF Hub + model card
-                                                              └── b9-spaces  Gradio demo + blog
-```
-
-`*b4-qlora 需 Google Colab T4，Mac MPS 不支援 bitsandbytes 4-bit 量化`
-
----
-
-## Branch 規格
-
-### b0-setup｜載入模型 + 推論驗證
-- **任務**：用 `transformers` 載入 Llama-3.2-3B-Instruct，問它一個問題，看到回答
-- **關鍵 API**：`pipeline("text-generation", model=..., device="mps")`
-- **前置**：需設定 `HF_TOKEN` 環境變數（Llama 3 為 gated model，需先在 HF 申請存取）
-- **DoD**：終端機印出模型回答，無報錯
-
-### b0b-tracer｜曳光彈（端對端最薄切片）
-- **任務**：跳過爬蟲，手寫 10 筆假 Q&A，跑完 format → 1-epoch 微調 → 推論，印出 base model 與 fine-tuned 的同題回答
-- **目的**：在投入真實資料前，驗證「fine-tune → 推論」這條主幹路徑可以跑通，以及模型能否學到風格差異
-- **DoD**：base model 與 fine-tuned 的回答出現可見差異，訓練全程無報錯
-
-### b1a-scrape｜爬取演講原文
-- **任務**：爬取 `archive.tw/speeches` 所有中文演講頁面，儲存成 raw JSON
-- **限制**：只取繁體中文版；「商周專欄」等非 Q&A 格式需跳過
-- **實際結果**：1213 篇演講，55834 組 Q&A，存於 `data/raw_speeches.json`
-- **HTML 結構**：每個發言是 `<li>` 包 `<a href="/speaker/...">` + 發言文字；唐鳳的 speaker href 含 `%E5%94%90%E9%B3%B3`
-- **過濾策略**：三層過濾（URL 含中文 → 唐鳳出現 → 有 Q&A 結構），無需語言偵測套件
-- **DoD**：✅ 本地有一份 JSON 檔，包含所有中文演講的標題、日期、內文
-
-### b1b-format｜資料格式化
-- **任務**：把逐字稿解析成 Q&A 對，套用 chat_template，tokenize，切分資料集，印出一筆樣本
-- **關鍵**：`tokenizer.apply_chat_template()` 插入 Llama 3 的 `<|begin_of_text|>` / `<|eot_id|>` 特殊符號
-- **資料切分**（時間切分，避免 data leakage）：
-  - 訓練集 85%：2020–2024 年演講
-  - 驗證集 10%：2025 年演講
-  - 測試集 5%：2026 年演講（b5 唯一用到的時機，訓練全程不碰）
-- **品質過濾**：過濾掉回答少於 50 個 token 的 Q&A pair（太短代表沒有完整論述，學不到風格）
-- **DoD**：印出一筆完整的 tokenized 樣本，可看到 input_ids 數列；三份資料集筆數確認無誤
-
-### b2-sft｜SFTTrainer 跑通微調
-- **任務**：用 `trl` 的 SFTTrainer 做第一次微調，觀察 loss 下降
-- **關鍵超參數**：
-  - `learning_rate=2e-4`（LLM 微調學習率要極小，太大訓練直接崩）
-  - `warmup_ratio=0.1`（前 10% steps 做預熱，防止訓練初期 loss 爆炸）
-  - `max_seq_length=512`（原定 1024，因 MPS 記憶體限制調降；見下方硬體備註）
-- **記憶體策略**：`gradient_accumulation_steps=4` + `gradient_checkpointing=True` + `optim="adafactor"`
-- **可重現性**：固定 `seed=42`，確保 b2 vs b3 結果可比較
-- **防止 Catastrophic Forgetting**：訓練資料中混入 5% Alpaca 通用對話資料，維持模型原有語言能力
-- **驗證集**：`SFTTrainer(eval_dataset=val_dataset)`，訓練中同步監控 validation loss
-- **監控**：用 WandB（`report_to="wandb"`）觀察 train loss 與 val loss 曲線；val loss 開始回升即停止訓練
-- **硬體備註（M4 Pro 64GB 實測）**：b2 全參數微調無法在此機器上執行。根本原因：`other allocations`（Python runtime + 虛擬記憶體映射）固定佔用 71GB，加上 MPS 訓練約 16GB，合計 87GB，剩餘 1.26GB 不足以支撐 lm_head 的 `grad²` 計算（需 1.47GB）。已試過 Adafactor、max_seq_length=512、low_cpu_mem_usage=True，均無法解決。**決定跳過實際執行，直接進 b3-lora。**
-- **b5 影響**：base → b2-sft 的比較改用文獻數據補充說明，b2-sft → b3-lora 的對比以 b3-lora 結果為主。
-- **DoD**：（已跳過）學習目標透過排查過程完整記錄於 learning.md
-
-### b3-lora｜LoRA 參數高效微調
-- **任務**：用 `peft` 加上 LoRA adapter，比較可訓練參數量
-- **關鍵參數**：`r=8`、`lora_alpha=16`、`target_modules=["q_proj","v_proj"]`
-- **DoD**：可訓練參數量 < 模型總參數量的 1%
-
-### b4-qlora｜4-bit 量化微調（Colab）
-- **任務**：在 Google Colab T4 GPU 上跑 QLoRA，體驗完整量化微調流程
-- **關鍵**：`BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4")` + `prepare_model_for_kbit_training()`
-- **訓練規模**：1 epoch，**1000 筆**（約 2% 訓練集）；全量訓練實測約 16 小時，遠超 Colab 免費配額；實際免費配額約 2.5 小時（因帳號用量而異），5000 筆仍超時，最終以 1000 筆完成；b4 目的是跑通 QLoRA 流程，不需全量資料
-- **關鍵輸出**（訓練完成後下載回本機）：
-  - `outputs/b4_qlora_log.json`：train loss、eval loss、runtime、可訓練參數量
-  - `checkpoints/b4/adapter/`：LoRA adapter 權重（b5-eval 量化損失對比用）
-- **Colab 注意事項**：
-  - `max_seq_length` 在新版 TRL 不屬於 `SFTConfig`，要傳給 `SFTTrainer(max_seq_length=...)`
-  - cell 執行順序：載入模型 → **套 LoRA adapter** → smoke test → 正式訓練（LoRA 必須在 smoke test 之前）
-  - WandB API key 需 40 字元以上，從 wandb.ai → User Settings → API keys 取得
-  - 每次用完記得 Runtime → Manage sessions → Terminate，避免佔用 session 配額
-  - **cell 排隊陷阱**：訓練中不小心再按一次執行鍵會排隊，第一次跑完後立刻重跑，導致 `train_result` 被覆蓋（第二次被中斷時未定義）；儲存 log 前須確認 `train_result` 存在
-- **完成狀態**：✅ DoD 達成（2026-04-30）
-  - Colab notebook 跑通，1 epoch / 1000 筆，trainable_ratio = 0.127% < 1% ✓
-  - `outputs/b4_qlora_log.json` 已下載回本機（train_loss / eval_loss 因 cell 排隊問題為 null，loss 曲線數據存於 history）
-  - `checkpoints/b4/adapter/` 已下載回本機（b5-eval 量化損失對比用）
+### b0–b4｜從環境到 QLoRA 訓練
+*(詳見 git log 與各腳本註釋，已完成全線跑通)*
 
 ### b5-eval｜效果評估
-
-**比較矩陣**：b2-sft 因 M4 Pro 64GB MPS 記憶體限制無法執行，評估以實際產出的模型為主：
-
-| 比較組 | 問的問題 | 主要指標 |
-|--------|---------|---------|
-| base → b3-lora | 微調後風格有沒有改變？ | Perplexity、ROUGE、LLM-as-a-Judge |
-| b3-lora → b4-qlora | 4-bit 量化損失多少品質？ | 同上 |
-| b6（無 RAG）→ b7（有 RAG） | RAG 有沒有減少幻覺？ | 引用準確度、人工核對 |
-| （文獻補充）Full SFT vs LoRA | LoRA 以 1% 參數能達到接近效果嗎？ | 引用 LoRA 論文數據，說明為何不執行 b2 |
-
-**指標說明**：
-
-- **Perplexity**：在 held-out 唐鳳演講集上測，數值越低代表模型越「預測得到」她的說話方式，即風格契合度越高
-- **ROUGE**：微調後回答與她真實回答的 n-gram 重疊率，有效但抓不到風格的深層特徵
-- **LLM-as-a-Judge**：請 Claude 或 GPT-4 對「這段回答有多像唐鳳」打 1–10 分，是最直接量測風格的方式；對同一問題取 base model 與 fine-tuned 的回答各一份送給 judge 評分
-- **Overfitting 檢查**：在少量 MMLU 題目上比較 base 與 fine-tuned 分數，確認一般語言能力沒有明顯退化（catastrophic forgetting）
-
-**任務**：對 b1b 切出的**測試集**（2026 年演講，訓練全程未見過）跑以上四組比較，整理成表格
-
-**視覺化產出（Blog 用）**：以下 5 張圖為 b5 必交付物，存入 `blog/assets/`
-
-**圖 1 — Loss Curve（訓練健康度）**
-- 從 b3-lora 訓練 log 取 `trainer.state.log_history`，畫 train loss 與 val loss 雙折線（b2-sft 因硬體限制未執行，不納入）
-- X 軸：steps；Y 軸：loss；標出 early stopping 點（val loss 開始回升處）
-- 工具：`matplotlib`；WandB 截圖可作為補充，但需額外輸出靜態 PNG 存檔
-
-**圖 2 — 三欄 Side-by-Side 對比（最直觀的說服工具）**
-- 選 5–8 個代表性問題，涵蓋政策類、科技倫理類、開放政府類
-- 每題對比三欄：Base Model / 微調後（b3-lora）/ 微調 + RAG（b7）
-- 格式：Markdown 表格（blog 直接嵌入）或 HTML 三欄 div
-- 問題需包含至少一題讓 Base Model 明顯失敗的 edge case
-
-**圖 3 — 風格詞頻對比圖（Tangram 獨有亮點）**
-- 定義唐鳳「簽名詞」清單（至少含：協作、透明、信任、公民、參與、開放、審議、數位）
-- 三組文本各自統計詞頻：原始演講語料 / Base Model 輸出 / 微調後輸出
-- 圖形：Grouped Bar Chart；工具：`jieba` 分詞 + `matplotlib`
-- 可額外附 Word Cloud 作為視覺點綴（非必要）
-
-**圖 4 — 雷達圖（多維風格能力對比）**
-- 5 個評分維度，需與唐鳳溝通特性直接對應：
-  1. 政策術語準確度（專業詞彙比例）
-  2. 包容性語言（「我們」/ 第一人稱複數使用頻率）
-  3. 類比解釋能力（遇抽象概念是否轉化為具體例子，LLM-as-Judge 評分）
-  4. 問題針對性（回答是否切題，LLM-as-Judge 評分）
-  5. 語氣一致性（台語借詞、特色句型符合度，LLM-as-Judge 評分）
-- 對比兩條線：Base Model vs b3-lora（可選加入 b3-lora+RAG 第三條線）
-- 評分方式：請 Claude 或 GPT-4o 對每題每維度打 1–5 分，取 5 題平均
-- 工具：`matplotlib` polar chart
-
-**圖 5 — ROUGE / Perplexity 跨版本對比圖**
-- X 軸：3 個模型版本（Base / b3-lora / b4-qlora）；b2-sft 欄以「硬體限制，未執行」標注
-- Y 軸左：ROUGE-L score；Y 軸右：Perplexity（雙軸折線或分組條形圖）
-- 工具：`rouge_score`（自訂 CJK tokenizer）+ Perplexity 用 test set 計算
-- 目的：呈現 base → LoRA 的風格改變幅度，以及 QLoRA 的量化損失幅度
-
-**DoD**：
-- 有 base vs b3-lora 的 perplexity、ROUGE 量化數字
-- 有 LLM-as-a-Judge 的風格評分（至少 5 題）
-- Overfitting 檢查：fine-tuned 的 MMLU 分數未大幅低於 base model
-- `blog/assets/` 資料夾內有圖 1–5 的 PNG 檔，命名規則：`fig1_loss_curve.png`、`fig2_sidebyside.md`、`fig3_word_freq.png`、`fig4_radar.png`、`fig5_metrics.png`
-
-**完成狀態**：✅ 主要 DoD 達成（2026-04-30）
+- **任務**：對測試集跑指標對比，並產出視覺化資產
+- **完成狀態**：✅ 主要 DoD 達成（2026-04-30）
 
 | 指標 | base | b3-lora | b4-qlora |
 |------|------|---------|----------|
 | Perplexity ↓ | 27.44 | **17.15** | 19.52 |
 | ROUGE-L ↑ | 0.105 | **0.139** | 0.099 |
 
-- b3-lora PPL 比 base 低 37%，ROUGE-L 高 32%，微調效果明確
-- b4-qlora 量化損失：PPL +2.37、ROUGE-L -0.040（1000 筆訓練資料不足亦有影響）
-- LLM-as-a-Judge：Gemini 2.0 Flash 評分，3 題完成（5 題中 2 題 API 呼叫失敗）
-- MMLU overfitting check：**未執行**（LoRA 天生抗遺忘，blog 補充文獻說明）
-- b4-qlora 推論在本機 MPS 執行（官方 bitsandbytes 0.49.2 已支援 MPS inference，無需 Colab）
-- **已知品質問題**：b3-lora / b4-qlora 在部分題目出現重複迴圈，訓練資料含爬蟲殘留標記（`前後文Link in context連結Link`）被模型學習，可作為 blog「反思」章節素材
+- **關鍵發現**：數值指標（PPL/ROUGE）雖然提升，但實際對話出現重複迴圈與爬蟲雜訊，顯示指標與真實體感存在鴻溝。
 
 ### b6-deploy｜本地部署
-- **任務**：把微調模型轉成 GGUF 格式，用 Ollama 在 Mac mini 本地跑
-- **流程**：adapter merge → `llama.cpp` 轉 GGUF → `ollama create`
-- **合併注意**：`merge_and_unload()` 前須確認 base model 以 FP16 或 BF16 載入，否則合併後精度損失會導致性能下降
-- **DoD**：`ollama run tangram` 可以對話，現場 demo 能跑
+- **任務**：模型轉換為 GGUF 並在 Ollama 運行
 - **完成狀態**：✅ DoD 達成（2026-04-30）
-  - 使用 b3-lora adapter（b3 訓練集完整，品質優於 b4-qlora）
-  - `outputs/b6_merged/`：merge 後完整模型（BF16，HF 格式）
-  - `outputs/tangram_f16.gguf`：F16 GGUF（6.4GB）
-  - `outputs/tangram.gguf`：Q4_K_M 量化（**2.0GB**，5.01 BPW）
-  - `ollama run tangram` 可以對話 ✓
-- **工具注意**：Homebrew llama.cpp 不打包 Python `gguf/` 套件；直接用 PyPI `gguf` 會有版本不匹配問題。解法：`vendor/llama.cpp`（shallow clone），用其內建 `gguf/` 搭配 `PYTHONPATH` 執行 `convert_hf_to_gguf.py`
-- **額外依賴**：`uv add gguf sentencepiece`（convert script 需要）
-
-### b7-rag｜加上 RAG 事實錨定
-- **任務**：把唐鳳演講原文建成向量資料庫，讓模型回答時引用真實說過的話
-- **工具**：`chromadb`（本地向量庫）+ `sentence-transformers`（文字轉向量）
-- **DoD**：問一個問題，回答中能引用她演講的原文段落
-
-### b8-hub｜發布與記錄
-- **任務**：push adapter 到 HuggingFace Hub，寫 model card
-- **DoD**：HF Hub 上有公開連結，model card 記錄訓練資料、評估結果與使用方式
-
-### b9-spaces｜公開 Demo + Blog
-- **任務**：在 HF Spaces 建 Gradio demo，實作 session-based rate limiting，寫 blog 文章
-- **Rate limiting 策略**：
-  ```python
-  # 同時請求上限
-  demo.queue(max_size=5, default_concurrency_limit=1)
-
-  # 每 session 限制 10 次
-  def predict(prompt, count: int, request: gr.Request):
-      if count >= 10:
-          return "今日已達使用上限，明天再來。", count
-      ...
-      return response, count + 1
-  ```
-- **Blog 敘事架構**（按此順序撰寫，技術敘事而非技術報告）：
-  1. **為什麼是唐鳳？** — 動機 + 挑戰說明（她的溝通風格為何值得學習？）
-  2. **資料工程** — 從演講到訓練格式（b1a/b1b 流程截圖 + 資料量統計）
-  3. **三階段訓練** — SFT → LoRA → QLoRA（圖 1 Loss Curve + 可訓練參數量對比）
-  4. **效果如何？** — 圖 2 Side-by-Side + 圖 3 詞頻圖 + 圖 4 雷達圖 + 圖 5 ROUGE/Perplexity
-  5. **RAG 加持前後差異** — 引用準確度對比（圖 2 第三欄 vs 第二欄）
-  6. **反思：哪裡還不夠好** — 錯誤案例分析，說明下一步優化方向（展示 critical thinking）
-- **圖表來源**：所有圖直接引用 `blog/assets/` 內的 b5-eval 產出，不重新生成
-- **DoD**：HF Spaces 公開 URL 可測試、rate limiting 有效、blog 文章草稿完成，6 個章節皆有對應內容
+- **產出**：`tangram.gguf` (Q4_K_M, 2.0GB)，可在本地實現秒開對話。
 
 ---
 
-## AI 協作守則
+## 🚫 未竟之路：實驗設計保留區
 
-1. **每個 branch 獨立問**：不要一次問跨 branch 的問題，每個 branch 有自己的 DoD，做完才進下一個。
-2. **程式碼優先，解釋其次**：先給可以跑的 code snippet，術語解釋放在 comment 或事後問。
-3. **MPS 相容性：先評估，再決定**：遇到 CUDA-only 套件時，先確認是否有官方或社群維護的 MPS 相容版本。**推論（inference）**：若官方套件有 MPS 支援，或社群 fork 近 6 個月內有更新，優先嘗試本機執行。**訓練（training）**：4-bit 量化訓練仍建議在 Colab T4，MPS 反向傳播支援不穩定。**時間限制**：本機嘗試若 30 分鐘內無法解決則切換 Colab，不要無限繞行。
-4. **debug 時給完整 traceback**：不要只貼最後一行錯誤，完整 traceback 才能定位問題。
-5. **資料格式驗證**：b1b 做完後，幫驗證至少一筆 tokenized 樣本的格式是否符合 Llama 3 chat template 規格。
-6. **不要跳步驟**：每個 branch 有 DoD，DoD 沒達到不要往下一個 branch 推。
-7. **選擇性測試**：只對純函數寫 assert（資料格式化、tokenization 檢查、RAG 查詢回傳筆數）。訓練迴圈和模型輸出風格靠 DoD 人工驗收，不強行套 TDD。
-8. **關鍵輸出存檔**：每個 branch 完成後，把關鍵輸出存成檔案（不只印在終端機），方便跨 branch 比較與 blog 取材。命名規則：`outputs/b0b_comparison.txt`、`outputs/b5_eval.json`，依此類推。
+*以下規格為原計畫執行但因專案方向轉向而叫停的內容，保留作為下次專案的藍圖參考。*
 
-## 工作流規約：/ship (發布任務)
+### b7-rag｜檢索增強生成
+- **原始任務**：把演講原文建成向量庫，解決幻覺與重複迴圈問題
+- **預計工具**：`chromadb` + `sentence-transformers`
+- **設計策略**：
+  - Embedding：`paraphrase-multilingual-MiniLM-L12-v2`
+  - Chunking：按清洗後的 Q&A 對儲存
+  - 推論流程：使用者輸入 → 向量搜尋 → 組裝 Prompt (含 Audrey's context) → 生成
 
-當使用者下達 `/ship` 或要求「整理並提交變更」時，必須嚴格執行以下流程：
-
-1. **分組盤點**：使用 `git status` 與 `git diff` 分析目前所有未提交的變更。
-2. **邏輯拆分**：禁止 `git add .`。必須按功能邏輯（如：infra, feat, docs, fix）分組，確保每個 commit 僅包含相關檔案。
-3. **格式規範**：使用 **繁體中文** 撰寫 commit message，並遵循 **Conventional Commits** 格式：
-   - `feat:` 新功能
-   - `fix:` 修補 bug
-   - `docs:` 文件變更
-   - `build:` 構建系統、依賴項變更
-   - `refactor:` 重構
-4. **逐批提交**：分次執行 `git add` + `git commit`。
-5. **最終發布**：所有分組提交完成後，執行 `git push`。
+### b8-hub｜發布與 Model Card
+- **原始任務**：將 Adapter 推送到 HuggingFace Hub 並撰寫完整 Model Card
+- **預計步驟**：`huggingface-cli login` → `model.push_to_hub()`
 
 ---
 
-## 參考資料對應
+## 📝 b9-blog｜失敗經驗與工程鏈路全紀錄 (Final Mission)
 
-| Branch | 主要參考 |
-|--------|---------|
-| b0–b2 | Hands-On Guide（有完整 code snippet） |
-| b3 | Ultimate Guide §PEFT 章節 |
-| b5 | Enhancing §Evaluation 章節 |
+- **任務**：將本次專案整理成誠實的技術 Blog，定調為「學習紀錄」與「技術回顧」。
+- **DoD**：Blog 文章草稿完成，包含 8 個深度區塊，並在首次出現時解釋微調術語。
+
+### Blog 敘事架構
+
+1.  **開場 Hook**：直接放 `ollama` 的鬼打牆輸出，建立「發身了什麼事」的懸念。
+2.  **術語科普**：解釋 **Fine-tuning**、**SFT**、**LoRA**、**QLoRA** 的本質與差異。
+3.  **工程鏈路閉環**：
+    *   **資料工程**：從 1213 篇逐字稿到 **Chat Template** 的轉換。
+    *   **架構決策**：M4 Pro 記憶體限制如何逼出 **LoRA** 與 **Gradient Checkpointing**。
+    *   **指標解讀**：解釋 **Perplexity (PPL)** 與 **ROUGE-L** 的意義。
+4.  **深度反思：數據是靈魂**：
+    *   **失敗分析**：爬蟲殘留標記如何污染模型靈魂。
+    *   **重複陷阱**：資料多樣性不足導致的生成崩潰。
+5.  **下次我會怎麼做**：
+    *   建立 **資料清洗 Checklist**。
+    *   引入 **Synthetic Data (合成數據)** 增強質量。
+    *   將 **b7 (RAG)** 納入初期設計而非補救措施。
+
+---
+
+## AI 協作守則 (修訂版)
+
+1. **實戰優先**：優先嘗試 MPS 本機執行，若遇 bitsandbytes 等限制，評估後切換 Colab，不要無限繞行。
+2. **誠實紀錄**：每個失敗的 Traceback 都是 Blog 的素材，需完整保留與分析。
+3. **資料為王**：在未來的專案中，EDA (探索性資料分析) 與清洗佔比需提升至 50% 以上。
