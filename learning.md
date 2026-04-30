@@ -677,3 +677,27 @@ train_loss (2.12) < eval_loss (2.39)，差距約 0.27，token accuracy 差距約
 - Claude Pro 和 Google One 訂閱都不含 API 存取；Anthropic API 和 Google API 需分別在 console.anthropic.com 和 aistudio.google.com 另外申請
 - Google AI Studio 提供免費 Gemini API key（不需付費訂閱），b5-eval 的 15 次 API 呼叫完全在免費額度內
 - 實測：Gemini 2.0 Flash 對「這段回答像不像唐鳳風格」的評分穩定，輸出格式符合 JSON 規範
+
+---
+
+### b6（2026-04-30）
+
+**坑 1：Homebrew llama.cpp 的 `convert_hf_to_gguf.py` 與 PyPI `gguf` 版本不匹配**
+- 問題：`uv add gguf` 安裝 PyPI `gguf==0.18.0` 後，`convert_hf_to_gguf.py` 執行時報 `AttributeError: type object 'MODEL_ARCH' has no attribute 'GEMMA4'`
+- 原因：Homebrew llama.cpp build 8980 的 convert script 比 PyPI `gguf 0.18.0` 新，引用了後者還未定義的 `GEMMA4` arch
+- 解法：shallow clone llama.cpp 源碼到 `vendor/llama.cpp`，用 `PYTHONPATH=vendor/llama.cpp` 讓 convert script 讀到自己配套的 `gguf/` 子套件，版本永遠匹配
+- 學到：Homebrew 安裝的 Python 工具腳本只打包了 `.py` 檔案，沒有附帶它依賴的 Python 套件；遇到工具腳本版本問題，直接用源碼比安裝對應版 PyPI 套件更可靠
+
+**坑 2：`convert_hf_to_gguf.py` 還需要 `sentencepiece`**
+- 問題：解決 `gguf` 版本問題後，接著報 `ModuleNotFoundError: No module named 'sentencepiece'`
+- 解法：`uv add sentencepiece`
+- 學到：convert script 的依賴不只 `gguf`，遇到連鎖 `ModuleNotFoundError` 時逐一安裝即可
+
+**量化結果**
+
+| 格式 | 體積 | BPW |
+|------|------|-----|
+| F16 GGUF | 6.4 GB | 16-bit |
+| Q4_K_M GGUF | **2.0 GB** | 5.01 |
+
+Q4_K_M 把體積壓縮到 31%，推論速度也更快，是 Ollama 本地部署的標準選擇。

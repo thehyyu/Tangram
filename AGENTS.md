@@ -289,6 +289,14 @@ b0-setup
 - **流程**：adapter merge → `llama.cpp` 轉 GGUF → `ollama create`
 - **合併注意**：`merge_and_unload()` 前須確認 base model 以 FP16 或 BF16 載入，否則合併後精度損失會導致性能下降
 - **DoD**：`ollama run tangram` 可以對話，現場 demo 能跑
+- **完成狀態**：✅ DoD 達成（2026-04-30）
+  - 使用 b3-lora adapter（b3 訓練集完整，品質優於 b4-qlora）
+  - `outputs/b6_merged/`：merge 後完整模型（BF16，HF 格式）
+  - `outputs/tangram_f16.gguf`：F16 GGUF（6.4GB）
+  - `outputs/tangram.gguf`：Q4_K_M 量化（**2.0GB**，5.01 BPW）
+  - `ollama run tangram` 可以對話 ✓
+- **工具注意**：Homebrew llama.cpp 不打包 Python `gguf/` 套件；直接用 PyPI `gguf` 會有版本不匹配問題。解法：`vendor/llama.cpp`（shallow clone），用其內建 `gguf/` 搭配 `PYTHONPATH` 執行 `convert_hf_to_gguf.py`
+- **額外依賴**：`uv add gguf sentencepiece`（convert script 需要）
 
 ### b7-rag｜加上 RAG 事實錨定
 - **任務**：把唐鳳演講原文建成向量資料庫，讓模型回答時引用真實說過的話
