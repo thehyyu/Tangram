@@ -643,3 +643,37 @@ train_loss (2.12) < eval_loss (2.39)，差距約 0.27，token accuracy 差距約
 - 原因：之前開過的 Colab session 沒有手動關閉，免費版有同時 session 數量上限
 - 解法：Runtime → Manage sessions → 終止舊 session
 - 學到：Colab 的 session 不會自動關閉，每次用完要養成手動 Terminate 的習慣，否則 GPU 資源會被舊 session 佔用
+
+### b5（2026-04-30）
+
+**坑 1：`rouge_score` 只支援 `[a-z0-9]`，中文永遠得 0**
+- 問題：`evaluate.load("rouge")` 底層用 `rouge_score`，其 tokenizer 硬編碼 `NON_ALPHANUM_PATTERN = r"[^a-z0-9]+"` 和 `VALID_TOKEN_PATTERN = r"^[a-z0-9]+$"`，所有中文字元都被過濾，ROUGE-L 恆為 0.0
+- 解法：直接用 `rouge_score.RougeScorer` 並傳入自訂 `CJKTokenizer`，以 jieba 分詞結果作為 token 清單
+- 學到：使用英文 NLP 套件評估中文時，一定要先確認其 tokenizer 是否支援非 ASCII 字元；`evaluate` 包裝層隱藏了這個細節
+
+**坑 2：matplotlib 預設字體不支援 CJK**
+- 問題：圖表標籤全部出現 `Glyph XXXX missing from font(s) DejaVu Sans`，圖表中文變成方框
+- 解法：在 script 頂部偵測系統中可用的 CJK 字體（PingFang SC / Heiti TC / Arial Unicode MS），設定 `plt.rcParams["font.sans-serif"]`
+- 學到：在 macOS 上做中文視覺化，要在 import matplotlib 之後立即設定字體，否則所有圖都會亂碼
+
+**坑 3：bitsandbytes MPS 支援比想像中完整**
+- 問題：原本守則寫「bitsandbytes 不支援 MPS，一律用 Colab」，b5-eval 需要跑 b4-qlora 推論
+- 實測：官方 `bitsandbytes 0.49.2` 已有 MPS wheel，4-bit NF4 模型可在 Mac MPS 上載入並正常推論，無需 Colab
+- 學到：套件生態系持續演進；**推論**（只需 forward pass）的硬體相容性門檻遠低於**訓練**（需要 backward pass 和量化梯度）；遇到 CUDA-only 限制時，先確認是 inference 還是 training 需求
+
+**觀察 1：重複迴圈是訓練資料不足的典型症狀**
+- 現象：b3-lora 和 b4-qlora 在部分題目生成時陷入重複迴圈（「可以幫助民主制度更好地運作，例如可以幫助民主制度...」無限重複）
+- 原因：模型在訓練資料中見到某個句型太多次，學到「出現這個 token 就接這個 token」的捷徑，無法跳脫；訓練資料越少、越不多樣，越容易發生
+- 緩解方法：增加 `repetition_penalty`（如 1.1–1.3）、`no_repeat_ngram_size`（如 3）於生成參數；或增加訓練資料多樣性
+- Blog 價值：這是「反思：哪裡還不夠好」章節的直接素材
+
+**觀察 2：模型學會了爬蟲殘留標記**
+- 現象：部分生成回答中出現 `前後文Link in context連結Link`，這是 b1a 爬蟲時未清除乾淨的 HTML 殘留
+- 原因：模型在訓練資料中見到這個字串，學習它是「唐鳳說話的一部分」
+- 正確做法：b1b 資料格式化時應加入清洗步驟，移除所有非對話內容的殘留標記
+- 學到：訓練資料的品質直接影響模型輸出；「垃圾進，垃圾出」在 LLM 微調中同樣適用
+
+**LLM-as-a-Judge：Gemini 免費 API 可替代付費方案**
+- Claude Pro 和 Google One 訂閱都不含 API 存取；Anthropic API 和 Google API 需分別在 console.anthropic.com 和 aistudio.google.com 另外申請
+- Google AI Studio 提供免費 Gemini API key（不需付費訂閱），b5-eval 的 15 次 API 呼叫完全在免費額度內
+- 實測：Gemini 2.0 Flash 對「這段回答像不像唐鳳風格」的評分穩定，輸出格式符合 JSON 規範

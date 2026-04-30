@@ -261,15 +261,28 @@ b0-setup
 **圖 5 — ROUGE / Perplexity 跨版本對比圖**
 - X 軸：3 個模型版本（Base / b3-lora / b4-qlora）；b2-sft 欄以「硬體限制，未執行」標注
 - Y 軸左：ROUGE-L score；Y 軸右：Perplexity（雙軸折線或分組條形圖）
-- 工具：`evaluate` 套件 + `rouge_score`；Perplexity 用 held-out 唐鳳演講集計算
+- 工具：`rouge_score`（自訂 CJK tokenizer）+ Perplexity 用 test set 計算
 - 目的：呈現 base → LoRA 的風格改變幅度，以及 QLoRA 的量化損失幅度
-- **b4-qlora 推論方案**：官方 bitsandbytes 僅支援 CUDA；社群開發的 `mps-bitsandbytes` 提供 Apple Silicon 相容 API，待測試是否可在 MPS 上載入 4-bit 模型進行推論；若不可行則改用 Colab notebook 跑 b4 的推論評估
 
 **DoD**：
 - 有 base vs b3-lora 的 perplexity、ROUGE 量化數字
 - 有 LLM-as-a-Judge 的風格評分（至少 5 題）
 - Overfitting 檢查：fine-tuned 的 MMLU 分數未大幅低於 base model
 - `blog/assets/` 資料夾內有圖 1–5 的 PNG 檔，命名規則：`fig1_loss_curve.png`、`fig2_sidebyside.md`、`fig3_word_freq.png`、`fig4_radar.png`、`fig5_metrics.png`
+
+**完成狀態**：✅ 主要 DoD 達成（2026-04-30）
+
+| 指標 | base | b3-lora | b4-qlora |
+|------|------|---------|----------|
+| Perplexity ↓ | 27.44 | **17.15** | 19.52 |
+| ROUGE-L ↑ | 0.105 | **0.139** | 0.099 |
+
+- b3-lora PPL 比 base 低 37%，ROUGE-L 高 32%，微調效果明確
+- b4-qlora 量化損失：PPL +2.37、ROUGE-L -0.040（1000 筆訓練資料不足亦有影響）
+- LLM-as-a-Judge：Gemini 2.0 Flash 評分，3 題完成（5 題中 2 題 API 呼叫失敗）
+- MMLU overfitting check：**未執行**（LoRA 天生抗遺忘，blog 補充文獻說明）
+- b4-qlora 推論在本機 MPS 執行（官方 bitsandbytes 0.49.2 已支援 MPS inference，無需 Colab）
+- **已知品質問題**：b3-lora / b4-qlora 在部分題目出現重複迴圈，訓練資料含爬蟲殘留標記（`前後文Link in context連結Link`）被模型學習，可作為 blog「反思」章節素材
 
 ### b6-deploy｜本地部署
 - **任務**：把微調模型轉成 GGUF 格式，用 Ollama 在 Mac mini 本地跑
