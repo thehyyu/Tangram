@@ -701,3 +701,27 @@ train_loss (2.12) < eval_loss (2.39)，差距約 0.27，token accuracy 差距約
 | Q4_K_M GGUF | **2.0 GB** | 5.01 |
 
 Q4_K_M 把體積壓縮到 31%，推論速度也更快，是 Ollama 本地部署的標準選擇。
+
+**觀察：部署端無法修復訓練資料的問題**
+
+實測 `ollama run tangram` 後出現三個症狀：
+
+1. 回答中噴出 `前後文LinkLinkLinkLink` 及假造的外部 URL
+2. 回答與問題完全脫鉤（問早餐建議，卻推薦去看某網站）
+3. 重複迴圈不停止
+
+這三個症狀指向同一根源：b1a 爬下來的 HTML 導覽連結殘留（`前後文 Link in context 連結Link`）在 b1b 沒有清洗，模型把它們當成唐鳳說話的一部分學進去了。
+
+Modelfile 的 stop token、`repeat_penalty` 只能調整生成行為，改不了已經學進去的 pattern。
+
+**b1b 應補的清洗步驟（記錄，下次重訓時加）**：
+```python
+import re
+def clean_text(text):
+    text = re.sub(r'前後文?Link.*?(?=\n|$)', '', text)
+    text = re.sub(r'Link in context.*?(?=\n|$)', '', text)
+    text = re.sub(r'連結Link', '', text)
+    return text.strip()
+```
+
+學到：訓練資料的清洗問題在部署階段才會以最直接的方式暴露——模型把雜訊當規律學，推論時照樣輸出。「垃圾進，垃圾出」在 LLM 微調上比一般 ML 更明顯，因為語言模型的輸出直接可讀。
