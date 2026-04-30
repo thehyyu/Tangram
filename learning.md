@@ -596,3 +596,32 @@ train_loss (2.12) < eval_loss (2.39)，差距約 0.27，token accuracy 差距約
 - 原因：10 筆資料 ÷ `gradient_accumulation_steps=4` = 只有 3 個更新步驟，`warmup_ratio=0.1` 對應到 0.3 步，等於沒有 warmup；學習率從一開始就全速，模型無法適應
 - 解法：`gradient_accumulation_steps=1`（讓 10 筆資料變成 10 步），`learning_rate` 從 `2e-4` 降到 `2e-5`，加上 `max_grad_norm=1.0` 裁剪梯度
 - 學到：`gradient_accumulation_steps` 會壓縮步驟數，資料量少時要特別注意；warmup 需要足夠的步驟才能發揮作用；小資料集用保守的 learning rate
+
+---
+
+### b4（2026-04-30）
+
+**坑 1：`max_seq_length` 在 Colab 版 TRL 已完全移除，兩處都不接受**
+- 問題一：`TypeError: SFTConfig.__init__() got an unexpected keyword argument 'max_seq_length'`
+- 問題二：改傳給 `SFTTrainer` 後仍報 `TypeError: SFTTrainer.__init__() got an unexpected keyword argument 'max_seq_length'`
+- 原因：這個版本的 TRL，`max_seq_length` 在 `SFTConfig` 和 `SFTTrainer` 都不接受了
+- 解法：直接把 `max_seq_length` 整行刪掉。tokenizer 在載入時已設定 `model_max_length = 1024`，tokenization 時會自動截斷，不需要另外傳
+- 學到：遇到 `unexpected keyword argument`，不要只是搬到另一個地方，要先確認這個版本根本還支不支援這個參數；`tokenizer.model_max_length` 是兜底機制，一定要設
+
+**坑 2：LoRA cell 必須在 smoke test 之前執行**
+- 問題：notebook 的 cell 順序跑掉，smoke test 擺在 LoRA 設定之前
+- 原因：`prepare_model_for_kbit_training()` 和 `get_peft_model()` 沒跑的話，模型沒有可訓練參數，SFTTrainer 會試圖更新被凍結的 4-bit 量化權重
+- 正確順序：載入模型（BitsAndBytesConfig） → 套 LoRA adapter → smoke test → 正式訓練
+- 學到：在 Colab notebook 裡，cell 的執行順序就是程式的執行順序，寫 notebook 時要確認每個 cell 用到的變數在前面已經定義過
+
+**坑 3：WandB API key 需 40 字元以上**
+- 問題：`AuthenticationError: API key must have 40+ characters, has 36`
+- 原因：Colab Secrets 填入的是舊 key 或截斷的字串，WandB 拒絕認證
+- 解法：去 wandb.ai → User Settings → API keys 重新複製完整 key，或點 New key 生成新的
+- 學到：貼 token/key 時要確認字數，Colab Secrets 輸入框不會顯示長度提示
+
+**坑 4：Colab 工作階段過多**
+- 問題：`執行中的工作階段過多，請終止一個現有的工作階段以繼續`
+- 原因：之前開過的 Colab session 沒有手動關閉，免費版有同時 session 數量上限
+- 解法：Runtime → Manage sessions → 終止舊 session
+- 學到：Colab 的 session 不會自動關閉，每次用完要養成手動 Terminate 的習慣，否則 GPU 資源會被舊 session 佔用
